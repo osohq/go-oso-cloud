@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -20,8 +21,33 @@ func NewClient(url string, apiKey string) Client {
 }
 
 type Instance interface {
-	Id() string
 	Type() string
+	Id() string
+}
+
+type StringInstance struct {
+	Str string
+}
+
+func (s StringInstance) Type() string {
+	return "String"
+}
+
+func (s StringInstance) Id() string {
+	return s.Str
+}
+
+func String(s string) StringInstance {
+	return StringInstance{Str: s}
+}
+
+func (c Client) String(s string) StringInstance {
+	return String(s)
+}
+
+type TypedId struct {
+	Type string `json:"type"`
+	Id   string `json:"id"`
 }
 
 type Type interface {
@@ -49,17 +75,9 @@ func (c Client) apiCall(method string, path string, body io.Reader) (*http.Reque
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Basic "+c.apiKey)
+	req.Header.Set("User-Agent", "Oso Cloud (golang)")
 
 	return req, nil
-}
-
-func (c Client) get(path string) (*http.Response, error) {
-	req, err := c.apiCall("GET", path, nil)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{}
-	return client.Do(req)
 }
 
 func (c Client) post(path string, body io.Reader) (*http.Response, error) {
@@ -125,7 +143,7 @@ type ListReq struct {
 }
 
 type ListRes struct {
-	results []int
+	results []int // TODO
 }
 
 func (c Client) List(actor Instance, action string, resource Type) ([]int, error) {
@@ -164,28 +182,26 @@ func (c Client) List(actor Instance, action string, resource Type) ([]int, error
 	return resBody.results, nil
 }
 
-type RelationReq struct {
-	FromId   string `json:"from_id"`
-	FromType string `json:"from_type"`
-	Relation string `json:"relation"`
-	ToId     string `json:"to_id"`
-	ToType   string `json:"to_type"`
+type Fact struct {
+	Predicate string    `json:"predicate"`
+	Args      []TypedId `json:"args"`
 }
 
-func (c Client) AddRelation(from Instance, name string, to Instance) error {
-	reqBody := RelationReq{
-		FromId:   from.Id(),
-		FromType: from.Type(),
-		Relation: name,
-		ToId:     to.Id(),
-		ToType:   to.Type(),
+func (c Client) Tell(predicate string, args ...Instance) error {
+	jsonArgs := []TypedId{}
+	for _, arg := range args {
+		jsonArgs = append(jsonArgs, TypedId{Type: arg.Type(), Id: arg.Id()})
+	}
+	reqBody := Fact{
+		Predicate: predicate,
+		Args:      jsonArgs,
 	}
 	reqBodyJson, e := json.Marshal(reqBody)
 	if e != nil {
 		return e
 	}
 	reqBodyBytes := bytes.NewBuffer(reqBodyJson)
-	res, e := c.post("/relations", reqBodyBytes)
+	res, e := c.post("/facts", reqBodyBytes)
 	if e != nil {
 		return e
 	}
@@ -200,84 +216,24 @@ func (c Client) AddRelation(from Instance, name string, to Instance) error {
 	return nil
 }
 
-func (c Client) DeleteRelation(from Instance, name string, to Instance) error {
-	reqBody := RelationReq{
-		FromId:   from.Id(),
-		FromType: from.Type(),
-		Relation: name,
-		ToId:     to.Id(),
-		ToType:   to.Type(),
+func (c Client) Delete(predicate string, args ...Instance) error {
+	jsonArgs := []TypedId{}
+	for _, arg := range args {
+		jsonArgs = append(jsonArgs, TypedId{Type: arg.Type(), Id: arg.Id()})
+	}
+	reqBody := Fact{
+		Predicate: predicate,
+		Args:      jsonArgs,
 	}
 	reqBodyJson, e := json.Marshal(reqBody)
 	if e != nil {
 		return e
 	}
 	reqBodyBytes := bytes.NewBuffer(reqBodyJson)
-	res, e := c.delete("/relations", reqBodyBytes)
+	res, e := c.delete("/facts", reqBodyBytes)
 	if e != nil {
 		return e
 	}
-	defer res.Body.Close()
-	resBody, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return e
-	}
-	if res.StatusCode != 200 {
-		return errors.New(string(resBody))
-	}
-	return nil
-}
-
-type Role struct {
-	ResourceId   string `json:"resource_id"`
-	ResourceType string `json:"resource_type"`
-	Role         string `json:"role"`
-	ActorId      string `json:"actor_id"`
-	ActorType    string `json:"actor_type"`
-}
-
-func (c Client) AddRole(actor Instance, name string, resource Instance) error {
-	reqBody := Role{
-		ActorId:      actor.Id(),
-		ActorType:    actor.Type(),
-		Role:         name,
-		ResourceId:   resource.Id(),
-		ResourceType: resource.Type(),
-	}
-	reqBodyJson, e := json.Marshal(reqBody)
-	if e != nil {
-		return e
-	}
-	reqBodyBytes := bytes.NewBuffer(reqBodyJson)
-	res, e := c.post("/roles", reqBodyBytes)
-	if e != nil {
-		return e
-	}
-	defer res.Body.Close()
-	resBody, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return e
-	}
-	if res.StatusCode != 200 {
-		return errors.New(string(resBody))
-	}
-	return nil
-}
-
-func (c Client) DeleteRole(actor Instance, name string, resource Instance) error {
-	reqBody := Role{
-		ActorId:      actor.Id(),
-		ActorType:    actor.Type(),
-		Role:         name,
-		ResourceId:   resource.Id(),
-		ResourceType: resource.Type(),
-	}
-	reqBodyJson, e := json.Marshal(reqBody)
-	if e != nil {
-		return e
-	}
-	reqBodyBytes := bytes.NewBuffer(reqBodyJson)
-	res, e := c.post("/roles", reqBodyBytes)
 	defer res.Body.Close()
 	resBody, e := ioutil.ReadAll(res.Body)
 	if e != nil {
@@ -290,17 +246,17 @@ func (c Client) DeleteRole(actor Instance, name string, resource Instance) error
 }
 
 // TODO(gj): Do we need equivalent of Oso::Client::get_roles in Ruby client?
-func (c Client) GetResourceRoleForActor(resource Instance, role string, actor Instance) ([]Role, error) {
-	req, e := c.apiCall("GET", "/roles", nil)
+func (c Client) Get(predicate string, args ...Instance) ([]Fact, error) {
+	req, e := c.apiCall("GET", "/facts", nil)
 	if e != nil {
 		return nil, e
 	}
 	q := req.URL.Query()
-	q.Set("actor_type", actor.Type())
-	q.Set("actor_id", actor.Id())
-	q.Set("role", role)
-	q.Set("resource_type", resource.Type())
-	q.Set("resource_id", resource.Id())
+	q.Set("predicate", predicate)
+	for i, arg := range args {
+		q.Set(fmt.Sprintf("args.%d.type", i), arg.Type())
+		q.Set(fmt.Sprintf("args.%d.id", i), arg.Id())
+	}
 	req.URL.RawQuery = q.Encode()
 	res, e := http.DefaultClient.Do(req)
 	if e != nil {
@@ -314,10 +270,38 @@ func (c Client) GetResourceRoleForActor(resource Instance, role string, actor In
 	if res.StatusCode != 200 {
 		return nil, errors.New(string(resBodyJson))
 	}
-	var resBody []Role
+	var resBody []Fact
 	e = json.Unmarshal(resBodyJson, &resBody)
 	if e != nil {
 		return nil, e
 	}
 	return resBody, nil
+}
+
+type PolicyReq struct {
+	Src string `json:"src"`
+}
+
+func (c Client) Policy(policy string) error {
+	reqBody := PolicyReq{
+		Src: policy,
+	}
+	reqBodyJson, e := json.Marshal(reqBody)
+	if e != nil {
+		return e
+	}
+	reqBodyBytes := bytes.NewBuffer(reqBodyJson)
+	res, e := c.post("/policy", reqBodyBytes)
+	if e != nil {
+		return e
+	}
+	defer res.Body.Close()
+	resBody, e := ioutil.ReadAll(res.Body)
+	if e != nil {
+		return e
+	}
+	if res.StatusCode != 200 {
+		return errors.New(string(resBody))
+	}
+	return nil
 }
