@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	oso "github.com/osohq/go-oso"
+	oso "github.com/osohq/go-oso-cloud"
 )
 
 type User struct {
@@ -32,46 +32,49 @@ func (r Repo) Type() string {
 }
 
 func main() {
-	oso := oso.NewClient("http://localhost:8080", "b3NvX3Rlc3RfdXNlcjpvc29fdGVzdF90b2tlbg==")
-	_, e := oso.Authorize(User{id: 1}, "read", Repo{id: 2})
+	oso := oso.NewClient("http://localhost:8080", "dF8wMTIzNDU2Nzg5Om9zb190ZXN0X3Rva2Vu")
+	oso.Policy(`
+		actor User {}
+
+		resource Repo {
+			roles = ["member"];
+			permissions = ["read"];
+			relations = { parent: Repo };
+		}
+	`)
+	allowed, e := oso.Authorize(User{id: 1}, "read", Repo{id: 2})
+	if e != nil || allowed != false {
+		log.Fatalln(e, "Authorize", allowed)
+	}
+
+	results, e := oso.List(User{id: 1}, "read", Repo{})
+	if e != nil || len(results) != 0 {
+		log.Fatalln(e)
+	}
+
+	e = oso.Tell("has_relation", Repo{id: 2}, oso.String("parent"), Repo{id: 3})
 	if e != nil {
 		log.Fatalln(e)
 	}
-	// log.Printf("Authorize: %v\n", allowed)
 
-	// results, e := oso.List(User{id: 1}, "read", Repo{})
-	// if e != nil {
-	// 	log.Fatalln(e)
-	// }
-	// log.Printf("List: %v\n", results)
+	e = oso.Delete("has_relation", Repo{id: 2}, oso.String("parent"), Repo{id: 3})
+	if e != nil {
+		log.Fatalln(e)
+	}
 
-	// e = oso.AddRelation(Repo{id: 2}, "parent", Repo{id: 3})
-	// if e != nil {
-	// 	log.Fatalln(e)
-	// }
-	// log.Printf("AddRelation: success")
+	e = oso.Tell("has_role", Repo{id: 2}, oso.String("member"), User{id: 1})
+	if e != nil {
+		log.Fatalln(e)
+	}
 
-	// e = oso.DeleteRelation(Repo{id: 2}, "parent", Repo{id: 3})
-	// if e != nil {
-	// 	log.Fatalln(e)
-	// }
-	// log.Printf("DeleteRelation: success")
+	roles, e := oso.Get("has_role", Repo{id: 2}, oso.String("member"), User{id: 1})
+	if e != nil || len(roles) != 1 || roles[0].Predicate != "has_role" {
+		log.Fatalln(e)
+	}
 
-	// e = oso.AddRole(Repo{id: 2}, "member", User{id: 1})
-	// if e != nil {
-	// 	log.Fatalln(e)
-	// }
-	// log.Printf("AddRole: success")
-
-	// roles, e := oso.GetResourceRoleForActor(Repo{id: 2}, "member", User{id: 1})
-	// if e != nil {
-	// 	log.Fatalln(e)
-	// }
-	// log.Printf("GetResourceRoleForActor: %v", roles)
-
-	// e = oso.DeleteRole(Repo{id: 2}, "member", User{id: 1})
-	// if e != nil {
-	// 	log.Fatalln(e)
-	// }
-	// log.Printf("DeleteRole: success")
+	e = oso.Delete("has_role", Repo{id: 2}, oso.String("member"), User{id: 1})
+	if e != nil {
+		log.Fatalln(e)
+	}
+	log.Printf("Success")
 }
