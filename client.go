@@ -9,13 +9,23 @@ import (
 	"net/http"
 )
 
+type OsoClient interface {
+	Authorize(actor Instance, action string, resource Instance) (bool, error)
+	List(actor Instance, action string, resource Type) ([]int, error)
+	AddRelation(from Instance, name string, to Instance) error
+	DeleteRelation(from Instance, name string, to Instance) error
+	AddRole(actor Instance, name string, resource Instance) error
+	DeleteRole(actor Instance, name string, resource Instance) error
+	GetResourceRoleForActor(resource Instance, role string, actor Instance) ([]Role, error)
+}
+
 type Client struct {
 	url    string
 	apiKey string
 	// TODO(gj): configurable logging?
 }
 
-func NewClient(url string, apiKey string) Client {
+func NewClient(url string, apiKey string) OsoClient {
 	return Client{url, apiKey}
 }
 
