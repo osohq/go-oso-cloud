@@ -19,14 +19,14 @@ type OsoClient interface {
 	GetResourceRoleForActor(resource Instance, role string, actor Instance) ([]Role, error)
 }
 
-type Client struct {
+type client struct {
 	url    string
 	apiKey string
 	// TODO(gj): configurable logging?
 }
 
 func NewClient(url string, apiKey string) OsoClient {
-	return Client{url, apiKey}
+	return client{url, apiKey}
 }
 
 type Instance interface {
@@ -46,7 +46,7 @@ type Role struct {
 	ActorType    string `json:"actor_type"`
 }
 
-func (c Client) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
+func (c client) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
 	url := c.url + "/api" + path
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
@@ -59,7 +59,7 @@ func (c Client) apiCall(method string, path string, body io.Reader) (*http.Reque
 	return req, nil
 }
 
-func (c Client) get(path string) (*http.Response, error) {
+func (c client) get(path string) (*http.Response, error) {
 	req, err := c.apiCall("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func (c Client) get(path string) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func (c Client) post(path string, body io.Reader) (*http.Response, error) {
+func (c client) post(path string, body io.Reader) (*http.Response, error) {
 	req, err := c.apiCall("POST", path, body)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (c Client) post(path string, body io.Reader) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func (c Client) delete(path string, body io.Reader) (*http.Response, error) {
+func (c client) delete(path string, body io.Reader) (*http.Response, error) {
 	req, err := c.apiCall("DELETE", path, body)
 	if err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func (c Client) delete(path string, body io.Reader) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func (c Client) Authorize(actor Instance, action string, resource Instance) (bool, error) {
+func (c client) Authorize(actor Instance, action string, resource Instance) (bool, error) {
 	payload := struct {
 		ActorType    string `json:"actor_type"`
 		ActorID      string `json:"actor_id"`
@@ -131,7 +131,7 @@ func (c Client) Authorize(actor Instance, action string, resource Instance) (boo
 	return resBody.Allowed, nil
 }
 
-func (c Client) List(actor Instance, action string, resource Type) ([]int, error) {
+func (c client) List(actor Instance, action string, resource Type) ([]int, error) {
 	payload := struct {
 		ActorType    string `json:"actor_type"`
 		ActorID      string `json:"actor_id"`
@@ -183,7 +183,7 @@ type relationReq struct {
 	ToType   string `json:"to_type"`
 }
 
-func (c Client) AddRelation(from Instance, name string, to Instance) error {
+func (c client) AddRelation(from Instance, name string, to Instance) error {
 	reqBody := relationReq{
 		FromID:   from.Id(),
 		FromType: from.Type(),
@@ -211,7 +211,7 @@ func (c Client) AddRelation(from Instance, name string, to Instance) error {
 	return nil
 }
 
-func (c Client) DeleteRelation(from Instance, name string, to Instance) error {
+func (c client) DeleteRelation(from Instance, name string, to Instance) error {
 	reqBody := relationReq{
 		FromID:   from.Id(),
 		FromType: from.Type(),
@@ -239,7 +239,7 @@ func (c Client) DeleteRelation(from Instance, name string, to Instance) error {
 	return nil
 }
 
-func (c Client) AddRole(actor Instance, name string, resource Instance) error {
+func (c client) AddRole(actor Instance, name string, resource Instance) error {
 	reqBody := Role{
 		ActorID:      actor.Id(),
 		ActorType:    actor.Type(),
@@ -267,7 +267,7 @@ func (c Client) AddRole(actor Instance, name string, resource Instance) error {
 	return nil
 }
 
-func (c Client) DeleteRole(actor Instance, name string, resource Instance) error {
+func (c client) DeleteRole(actor Instance, name string, resource Instance) error {
 	reqBody := Role{
 		ActorID:      actor.Id(),
 		ActorType:    actor.Type(),
@@ -296,7 +296,7 @@ func (c Client) DeleteRole(actor Instance, name string, resource Instance) error
 }
 
 // TODO(gj): Do we need equivalent of Oso::Client::get_roles in Ruby client?
-func (c Client) GetResourceRoleForActor(resource Instance, role string, actor Instance) ([]Role, error) {
+func (c client) GetResourceRoleForActor(resource Instance, role string, actor Instance) ([]Role, error) {
 	req, e := c.apiCall("GET", "/roles", nil)
 	if e != nil {
 		return nil, e
