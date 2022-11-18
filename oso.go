@@ -170,9 +170,9 @@ type client struct {
 
 func NewClient(url string, apiKey string) OsoClient {
 	retryClient := retryablehttp.NewClient()
-	retryClient.RetryMax = 15
-	retryClient.RetryWaitMin = 500 * time.Millisecond
-	retryClient.RetryWaitMax = 30 * time.Second
+	retryClient.RetryMax = 10
+	retryClient.RetryWaitMin = 10 * time.Millisecond
+	retryClient.RetryWaitMax = 1 * time.Second
 	return client{url, apiKey, retryClient.StandardClient()}
 }
 
