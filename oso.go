@@ -168,12 +168,22 @@ type client struct {
 	httpClient *http.Client
 }
 
-func NewClient(url string, apiKey string) OsoClient {
+// Create a new Oso client with a custom logger
+//
+// See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
+// for documentation on the logger interfaces supported.
+func NewClientWithLogger(url string, apiKey string, logger interface{}) OsoClient {
 	retryClient := retryablehttp.NewClient()
 	retryClient.RetryMax = 10
 	retryClient.RetryWaitMin = 10 * time.Millisecond
 	retryClient.RetryWaitMax = 1 * time.Second
+	retryClient.Logger = logger
 	return client{url, apiKey, retryClient.StandardClient()}
+}
+
+// Create a new default Oso client
+func NewClient(url string, apiKey string) OsoClient {
+	return NewClientWithLogger(url, apiKey, nil)
 }
 
 func (c client) AuthorizeWithContext(actor Instance, action string, resource Instance, context_facts []Fact) (bool, error) {

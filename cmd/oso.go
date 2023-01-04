@@ -13,7 +13,7 @@ type User struct {
 
 func (u User) Instance() oso.Instance {
 	typ, id := "User", fmt.Sprint(u.id)
-	return oso.Instance{Type: typ, Id: id}
+	return oso.Instance{Type: typ, ID: id}
 }
 
 type Repo struct {
@@ -22,7 +22,7 @@ type Repo struct {
 
 func (r Repo) Instance() oso.Instance {
 	typ, id := "Repo", fmt.Sprint(r.id)
-	return oso.Instance{Type: typ, Id: id}
+	return oso.Instance{Type: typ, ID: id}
 }
 
 func main() {
@@ -35,6 +35,8 @@ func main() {
 			permissions = ["read"];
 			relations = { parent: Repo };
       		"read" if "member";
+
+			"member" if "member" on "parent";
 		}
 	`)
 	allowed, e := o.Authorize(User{id: 1}.Instance(), "read", Repo{id: 2}.Instance())
@@ -63,7 +65,7 @@ func main() {
 	}
 
 	roles, e := o.Get("has_role", User{id: 1}.Instance(), oso.String("member"), Repo{id: 2}.Instance())
-	if e != nil || len(roles) != 1 || roles[0].Predicate != "has_role" {
+	if e != nil || len(roles) != 1 || roles[0].Name != "has_role" {
 		log.Fatalln(e)
 	}
 
