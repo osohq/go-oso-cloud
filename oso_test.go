@@ -2,6 +2,7 @@ package oso
 
 import (
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -31,9 +32,28 @@ func (c Computer) Instance() Instance {
 
 var idCounter = 1
 
+func getOsoTestUrl() string {
+	if url := os.Getenv("OSO_TEST_URL"); url != "" {
+		return url
+	}
+	return "https://cloud.osohq.com"
+}
+
+func getOsoTestAuth(t *testing.T) string {
+	if apiKey := os.Getenv("OSO_TEST_AUTH"); apiKey != "" {
+		return apiKey
+	}
+	t.Skip("Set the OSO_TEST_AUTH environment variable with your test API key to run this test")
+	return ""
+}
+
+func getOsoTestClient(t *testing.T) OsoClient {
+	return NewClient(getOsoTestUrl(), getOsoTestAuth(t))
+}
+
 func TestEverything(t *testing.T) {
-	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
-	o.Policy(`
+	oso := getOsoTestClient(t)
+	oso.Policy(`
 		actor User {}
 
 		resource Repo {
@@ -53,57 +73,57 @@ func TestEverything(t *testing.T) {
 	idCounter++
 
 	t.Run("everything", func(t *testing.T) {
-		allowed, e := o.Authorize(user, "read", repoChild)
+		allowed, e := oso.Authorize(user, "read", repoChild)
 		if e != nil || allowed != false {
 			t.Fatalf("Authorize = %t, %v, want %t", allowed, e, false)
 		}
 
-		results, e := o.List(user, "read", "Repo", nil)
+		results, e := oso.List(user, "read", "Repo", nil)
 		if e != nil || len(results) != 0 {
 			t.Fatalf("List = %v, %v, want %v", results, e, []string{})
 		}
 
-		e = o.Tell("has_relation", repoParent, String("parent"), repoChild)
+		e = oso.Tell("has_relation", repoParent, String("parent"), repoChild)
 		if e != nil {
 			t.Fatalf("Tell failed: %v", e)
 		}
 
-		e = o.Tell("has_role", user, String("member"), repoChild)
+		e = oso.Tell("has_role", user, String("member"), repoChild)
 		if e != nil {
 			t.Fatalf("Tell failed: %v", e)
 		}
 
-		roles, e := o.Get("has_role", user, String("member"), repoChild)
+		roles, e := oso.Get("has_role", user, String("member"), repoChild)
 		if e != nil || len(roles) != 1 || roles[0].Name != "has_role" {
 			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
 		}
 
-		allowed_again, e := o.Authorize(user, "read", repoChild)
+		allowed_again, e := oso.Authorize(user, "read", repoChild)
 		if e != nil || allowed_again != true {
 			t.Fatalf("Authorize = %t, %v, want %t", allowed_again, e, true)
 		}
 
-		actions, e := o.Actions(user, repoChild)
+		actions, e := oso.Actions(user, repoChild)
 		if e != nil || len(actions) != 1 || actions[0] != "read" {
 			t.Fatalf("Actions = %v, %v, want %v", actions, e, []string{"read"})
 		}
 	})
 
 	// teardown
-	e := o.Delete("has_role", user, String("member"), repoChild)
+	e := oso.Delete("has_role", user, String("member"), repoChild)
 	if e != nil {
 		t.Fatalf("Delete failed: %v", e)
 	}
 
-	e = o.Delete("has_relation", repoParent, String("parent"), repoChild)
+	e = oso.Delete("has_relation", repoParent, String("parent"), repoChild)
 	if e != nil {
 		t.Fatalf("Delete failed: %v", e)
 	}
 }
 
 func TestBulkFacts(t *testing.T) {
-	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
-	o.Policy(`
+	oso := getOsoTestClient(t)
+	oso.Policy(`
 		actor User {}
 
 		resource Repo {
@@ -134,56 +154,56 @@ func TestBulkFacts(t *testing.T) {
 	}
 
 	t.Run("bulk facts", func(t *testing.T) {
-		e := o.BulkTell(facts)
+		e := oso.BulkTell(facts)
 		if e != nil {
 			t.Fatalf("Bulk tell failed: %v", e)
 		}
-		roles, e := o.Get("has_role", user, String("member"), repoChild)
+		roles, e := oso.Get("has_role", user, String("member"), repoChild)
 		if e != nil || len(roles) != 1 || roles[0].Name != "has_role" {
 			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
 		}
-		relations, e := o.Get("has_relation", repoParent, String("parent"), repoChild)
+		relations, e := oso.Get("has_relation", repoParent, String("parent"), repoChild)
 		if e != nil || len(relations) != 1 || relations[0].Name != "has_relation" {
 			t.Fatalf("Get relations = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_relation")
 		}
 
-		e = o.BulkDelete(facts)
+		e = oso.BulkDelete(facts)
 		if e != nil {
 			t.Fatalf("Bulk delete failed: %v", e)
 		}
-		roles, e = o.Get("has_role", user, String("member"), repoChild)
+		roles, e = oso.Get("has_role", user, String("member"), repoChild)
 		if e != nil || len(roles) != 0 {
 			t.Fatalf("Get roles = %+v, %v, want %d elements", roles, e, 0)
 		}
-		relations, e = o.Get("has_relation", repoParent, String("parent"), repoChild)
+		relations, e = oso.Get("has_relation", repoParent, String("parent"), repoChild)
 		if e != nil || len(relations) != 0 {
 			t.Fatalf("Get relations = %+v, %v, want %d elements", roles, e, 0)
 		}
 
-		e = o.Bulk([]Fact{}, facts)
+		e = oso.Bulk([]Fact{}, facts)
 		if e != nil {
 			t.Fatalf("Bulk failed: %v", e)
 		}
-		roles, e = o.Get("has_role", user, String("member"), repoChild)
+		roles, e = oso.Get("has_role", user, String("member"), repoChild)
 		if e != nil || len(roles) != 1 || roles[0].Name != "has_role" {
 			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
 		}
-		e = o.Bulk(facts, []Fact{})
+		e = oso.Bulk(facts, []Fact{})
 		if e != nil {
 			t.Fatalf("Bulk failed: %v", e)
 		}
-		roles, e = o.Get("has_role", user, String("member"), repoChild)
+		roles, e = oso.Get("has_role", user, String("member"), repoChild)
 		if e != nil || len(roles) != 0 {
 			t.Fatalf("Get roles = %+v, %v, want %d elements", roles, e, 0)
 		}
 	})
 
 	// teardown
-	o.BulkDelete(facts)
+	oso.BulkDelete(facts)
 }
 
 func TestAuthorizeResources(t *testing.T) {
-	oso := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	oso := getOsoTestClient(t)
 	oso.Policy(`
 		actor User {}
 
@@ -260,7 +280,7 @@ func TestAuthorizeResources(t *testing.T) {
 }
 
 func TestContextFacts(t *testing.T) {
-	oso := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	oso := getOsoTestClient(t)
 	oso.Policy(`
 		actor User {}
 
@@ -393,7 +413,7 @@ func TestContextFacts(t *testing.T) {
 }
 
 func TestQuery(t *testing.T) {
-	oso := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	oso := getOsoTestClient(t)
 	oso.Policy(`
 		actor User {}
 		resource Computer {}
