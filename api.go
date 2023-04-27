@@ -115,7 +115,7 @@ func (c client) apiCall(method string, path string, body io.Reader) (*http.Reque
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("User-Agent", "Oso Cloud (golang)")
+	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("X-OsoApiVersion", "0")
 
 	return req, nil

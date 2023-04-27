@@ -5,6 +5,9 @@ package oso
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/go-retryablehttp"
@@ -166,6 +169,7 @@ type client struct {
 	url        string
 	apiKey     string
 	httpClient *http.Client
+	userAgent  string
 }
 
 // Create a new Oso client with a custom logger
@@ -178,7 +182,16 @@ func NewClientWithLogger(url string, apiKey string, logger interface{}) OsoClien
 	retryClient.RetryWaitMin = 10 * time.Millisecond
 	retryClient.RetryWaitMax = 1 * time.Second
 	retryClient.Logger = logger
-	return client{url, apiKey, retryClient.StandardClient()}
+
+	var userAgent string
+	rv, err := os.ReadFile("VERSION")
+	if err != nil {
+		userAgent = "Oso Cloud (golang " + runtime.Version() + ")"
+	} else {
+		userAgent = "Oso Cloud (golang " + runtime.Version() + "; rv:" + strings.TrimSuffix(string(rv), "\n") + ")"
+	}
+
+	return client{url, apiKey, retryClient.StandardClient(), userAgent}
 }
 
 // Create a new default Oso client
