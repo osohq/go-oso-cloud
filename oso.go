@@ -170,6 +170,7 @@ type client struct {
 	apiKey     string
 	httpClient *http.Client
 	userAgent  string
+	lastOffset string
 }
 
 // Create a new Oso client with a custom logger
@@ -190,8 +191,9 @@ func NewClientWithLogger(url string, apiKey string, logger interface{}) OsoClien
 	} else {
 		userAgent = "Oso Cloud (golang " + runtime.Version() + "; rv:" + strings.TrimSuffix(string(rv), "\n") + ")"
 	}
+	lastOffset := ""
 
-	return client{url, apiKey, retryClient.StandardClient(), userAgent}
+	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset}
 }
 
 // Create a new default Oso client
@@ -428,7 +430,7 @@ func (c client) Get(predicate string, args ...Instance) ([]Fact, error) {
 	if resp == nil {
 		return make([]Fact, 0), nil
 	}
-	return mapFromInternalFacts(*resp), nil
+	return mapFromInternalFacts(resp), nil
 }
 
 func (c client) Policy(p string) error {

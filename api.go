@@ -106,7 +106,7 @@ type statsResult struct {
 	NumFacts     int `json:"num_facts"`
 }
 
-func (c client) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
+func (c *client) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
 	url := c.url + "/api" + path
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
@@ -118,523 +118,224 @@ func (c client) apiCall(method string, path string, body io.Reader) (*http.Reque
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("X-OsoApiVersion", "0")
 
+	if c.lastOffset != "" {
+		req.Header.Set("OsoOffset", c.lastOffset)
+	}
+
 	return req, nil
 }
 
-func (c client) post(path string, body io.Reader) (*http.Response, error) {
-	req, err := c.apiCall("POST", path, body)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{}
-	return client.Do(req)
-}
-
-func (c client) delete(path string, body io.Reader) (*http.Response, error) {
-	req, err := c.apiCall("DELETE", path, body)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{}
-	return client.Do(req)
-}
-
-func (c client) GetPolicy() (*getPolicyResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyBytes = nil
-	url := "/policy"
-	req, e := c.apiCall("GET", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
+func (c *client) doRequest(req *http.Request, output interface{}, isMutation bool) error {
 	res, e := c.httpClient.Do(req)
 	if e != nil {
-		return nil, e
+		return e
 	}
 	defer res.Body.Close()
 	resBodyJSON, e := ioutil.ReadAll(res.Body)
 	if e != nil {
-		return nil, e
+		return e
 	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
+	if res.StatusCode >= 400 {
+		var apiErr apiError
+		e = json.Unmarshal(resBodyJSON, &apiErr)
+		if e != nil {
+			return e
+		}
+		return errors.New(apiErr.Message)
 	}
-	var resBody getPolicyResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
+	if isMutation {
+		c.lastOffset = res.Header.Get("OsoOffset")
+	}
+	e = json.Unmarshal(resBodyJSON, output)
 	if e != nil {
-		return nil, e
+		return e
 	}
-	return &resBody, nil
+	return nil
 }
 
-func (c client) PostPolicy(data policy) (*apiResult, error) {
+func (c *client) get(path string, query map[string]string, output interface{}) error {
+	req, e := c.apiCall("GET", path, nil)
+	if e != nil {
+		return e
+	}
+	q := req.URL.Query()
+	for k, v := range query {
+		q.Add(k, v)
+	}
+	req.URL.RawQuery = q.Encode()
+
+	return c.doRequest(req, output, false)
+}
+
+func (c *client) post(path string, data interface{}, output interface{}, isMutation bool) error {
 	var reqBodyBytes io.Reader
 	reqBodyJSON, e := json.Marshal(data)
 	if e != nil {
-		return nil, e
+		return e
 	}
 	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
-	url := "/policy"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
+	req, e := c.apiCall("POST", path, reqBodyBytes)
 	if e != nil {
-		return nil, e
+		return e
 	}
 	q := req.URL.Query()
 	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
+
+	return c.doRequest(req, output, isMutation)
+}
+
+func (c *client) delete(path string, data interface{}, output interface{}) error {
+	var reqBodyBytes io.Reader
+	reqBodyJSON, e := json.Marshal(data)
 	if e != nil {
+		return e
+	}
+	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+	req, e := c.apiCall("DELETE", path, reqBodyBytes)
+	if e != nil {
+		return e
+	}
+	q := req.URL.Query()
+	req.URL.RawQuery = q.Encode()
+
+	return c.doRequest(req, output, true)
+}
+
+func (c *client) GetPolicy() (*getPolicyResult, error) {
+	var result getPolicyResult
+	if e := c.get("/policy", nil, &result); e != nil {
 		return nil, e
 	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
+	return &result, nil
+}
+
+func (c *client) PostPolicy(data policy) (*apiResult, error) {
 	var resBody apiResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post("/policy", data, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostFacts(data fact) (*fact, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostFacts(data fact) (*fact, error) {
 	url := "/facts"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody fact
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) DeleteFacts(data fact) (*apiResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) DeleteFacts(data fact) (*apiResult, error) {
 	url := "/facts"
-	req, e := c.apiCall("DELETE", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody apiResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.delete(url, data, &resBody); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostBulkLoad(data []fact) (*apiResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostBulkLoad(data []fact) (*apiResult, error) {
 	url := "/bulk_load"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody apiResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostBulkDelete(data []fact) (*apiResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostBulkDelete(data []fact) (*apiResult, error) {
 	url := "/bulk_delete"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody apiResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostBulk(data bulk) (*apiResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostBulk(data bulk) (*apiResult, error) {
 	url := "/bulk"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody apiResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostAuthorize(data authorizeQuery) (*authorizeResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostAuthorize(data authorizeQuery) (*authorizeResult, error) {
 	url := "/authorize"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody authorizeResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, false); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostAuthorizeResources(data authorizeResourcesQuery) (*authorizeResourcesResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostAuthorizeResources(data authorizeResourcesQuery) (*authorizeResourcesResult, error) {
 	url := "/authorize_resources"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody authorizeResourcesResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, false); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostList(data listQuery) (*listResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostList(data listQuery) (*listResult, error) {
 	url := "/list"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody listResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, false); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostActions(data actionsQuery) (*actionsResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostActions(data actionsQuery) (*actionsResult, error) {
 	url := "/actions"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody actionsResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, false); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) PostQuery(data query) (*queryResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return nil, e
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+func (c *client) PostQuery(data query) (*queryResult, error) {
 	url := "/query"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody queryResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, data, &resBody, false); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) GetStats() (*statsResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyBytes = nil
+func (c *client) GetStats() (*statsResult, error) {
 	url := "/stats"
-	req, e := c.apiCall("GET", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody statsResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.get(url, nil, &resBody); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c client) ClearData() (*apiResult, error) {
-	var reqBodyBytes io.Reader
-	reqBodyBytes = nil
+func (c *client) ClearData() (*apiResult, error) {
 	url := "/clear_data"
-	req, e := c.apiCall("POST", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJSON))
-	}
 	var resBody apiResult
-	e = json.Unmarshal(resBodyJSON, &resBody)
-	if e != nil {
+	if e := c.post(url, nil, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-// NOTE: This method does not codegen property
-func (c client) GetFacts(predicate string, args []value) (*[]fact, error) {
-	var reqBodyBytes io.Reader
-	reqBodyBytes = nil
+func (c *client) GetFacts(predicate string, args []value) ([]fact, error) {
 	url := "/facts"
-	req, e := c.apiCall("GET", url, reqBodyBytes)
-	if e != nil {
-		return nil, e
-	}
-	q := req.URL.Query()
-	q.Set("predicate", predicate)
+	params := make(map[string]string)
+	params["predicate"] = predicate
 	for i, arg := range args {
-		q.Set(fmt.Sprintf("args.%d.type", i), *arg.Type)
-		q.Set(fmt.Sprintf("args.%d.id", i), *arg.Id)
-	}
-	req.URL.RawQuery = q.Encode()
-	res, e := c.httpClient.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer res.Body.Close()
-	resBodyJson, e := ioutil.ReadAll(res.Body)
-	if e != nil {
-		return nil, e
-	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(string(resBodyJson))
+		params[fmt.Sprintf("args.%d.type", i)] = *arg.Type
+		params[fmt.Sprintf("args.%d.id", i)] = *arg.Id
 	}
 	var resBody []fact
-	e = json.Unmarshal(resBodyJson, &resBody)
-	if e != nil {
+	if e := c.get(url, params, &resBody); e != nil {
 		return nil, e
 	}
-	return &resBody, nil
+	return resBody, nil
 }
