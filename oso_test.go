@@ -73,8 +73,20 @@ func TestEverything(t *testing.T) {
 			t.Fatalf("Tell failed: %v", e)
 		}
 
+		e = o.Tell("has_role", user, String("member"), repoParent)
+		if e != nil {
+			t.Fatalf("Tell failed: %v", e)
+		}
 		roles, e := o.Get("has_role", user, String("member"), repoChild)
 		if e != nil || len(roles) != 1 || roles[0].Name != "has_role" {
+			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
+		}
+		roles, e = o.Get("has_role", user, Instance{}, repoChild)
+		if e != nil || len(roles) != 1 || roles[0].Name != "has_role" {
+			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
+		}
+		roles, e = o.Get("has_role", user, Instance{}, Instance{})
+		if e != nil || len(roles) != 2 || roles[0].Name != "has_role" {
 			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
 		}
 

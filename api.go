@@ -330,8 +330,12 @@ func (c *client) GetFacts(predicate string, args []value) ([]fact, error) {
 	params := make(map[string]string)
 	params["predicate"] = predicate
 	for i, arg := range args {
-		params[fmt.Sprintf("args.%d.type", i)] = *arg.Type
-		params[fmt.Sprintf("args.%d.id", i)] = *arg.Id
+		if arg.Type != nil {
+			params[fmt.Sprintf("args.%d.type", i)] = *arg.Type
+		}
+		if arg.Id != nil {
+			params[fmt.Sprintf("args.%d.id", i)] = *arg.Id
+		}
 	}
 	var resBody []fact
 	if e := c.get(url, params, &resBody); e != nil {
