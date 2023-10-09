@@ -166,11 +166,13 @@ type OsoClient interface {
 }
 
 type client struct {
-	url        string
-	apiKey     string
-	httpClient *http.Client
-	userAgent  string
-	lastOffset string
+	url                string
+	apiKey             string
+	httpClient         *http.Client
+	userAgent          string
+	lastOffset         string
+	fallbackUrl        string
+	fallbackHttpClient *http.Client
 }
 
 // Create a new Oso client with a custom logger
@@ -192,13 +194,47 @@ func NewClientWithLogger(url string, apiKey string, logger interface{}) OsoClien
 		userAgent = "Oso Cloud (golang " + runtime.Version() + "; rv:" + strings.TrimSuffix(string(rv), "\n") + ")"
 	}
 	lastOffset := ""
+	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, "", nil}
 
-	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset}
+}
+
+// Create a new Oso client with a fallbackURL and custom logger
+//
+// See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
+// for documentation on the logger interfaces supported.
+func NewClientWithFallbackUrlAndLogger(url string, apiKey string, fallbackUrl string, logger interface{}) OsoClient {
+	retryClient := retryablehttp.NewClient()
+	retryClient.RetryMax = 10
+	retryClient.RetryWaitMin = 10 * time.Millisecond
+	retryClient.RetryWaitMax = 1 * time.Second
+	retryClient.Logger = logger
+
+	var userAgent string
+	rv, err := os.ReadFile("VERSION")
+	if err != nil {
+		userAgent = "Oso Cloud (golang " + runtime.Version() + ")"
+	} else {
+		userAgent = "Oso Cloud (golang " + runtime.Version() + "; rv:" + strings.TrimSuffix(string(rv), "\n") + ")"
+	}
+	lastOffset := ""
+
+	if fallbackUrl != "" {
+		fallbackClient := &http.Client{}
+		return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient}
+	} else {
+		return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, nil}
+	}
+
 }
 
 // Create a new default Oso client
 func NewClient(url string, apiKey string) OsoClient {
-	return NewClientWithLogger(url, apiKey, nil)
+	return NewClientWithFallbackUrlAndLogger(url, apiKey, "", nil)
+}
+
+// Create a new Oso client with a fallback URL configured
+func NewClientWithFallbackUrl(url string, apiKey string, fallbackUrl string) OsoClient {
+	return NewClientWithFallbackUrlAndLogger(url, apiKey, fallbackUrl, nil)
 }
 
 func (c client) AuthorizeWithContext(actor Instance, action string, resource Instance, context_facts []Fact) (bool, error) {

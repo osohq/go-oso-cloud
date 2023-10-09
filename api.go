@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 )
 
 type apiResult struct {
@@ -126,9 +127,39 @@ func (c *client) apiCall(method string, path string, body io.Reader) (*http.Requ
 }
 
 func (c *client) doRequest(req *http.Request, output interface{}, isMutation bool) error {
+	fallbackEligible := func(url *url.URL) bool {
+		contains := func(haystack []string, needle string) bool {
+			for _, v := range haystack {
+				if v == needle {
+					return true
+				}
+			}
+
+			return false
+		}
+
+		eligiblePaths := []string{"/api/authorize", "/api/authorize_resources", "/api/list", "/api/actions", "/api/query"}
+		return c.fallbackHttpClient != nil && contains(eligiblePaths, url.EscapedPath())
+	}
+	// make requests with retryclient
 	res, e := c.httpClient.Do(req)
 	if e != nil {
-		return e
+		// attempt to make a final request to fallbackURL if configured
+		if fallbackEligible(req.URL) {
+			// override the URL for the request to point to fallback
+			fb := c.fallbackUrl + req.URL.Path
+			fbUrl, err := url.Parse(fb)
+			if err != nil {
+				return err
+			}
+			req.URL = fbUrl
+			res, e = c.fallbackHttpClient.Do(req)
+			if e != nil {
+				return e
+			}
+		} else {
+			return e
+		}
 	}
 	defer res.Body.Close()
 	resBodyJSON, e := ioutil.ReadAll(res.Body)

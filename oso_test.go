@@ -107,6 +107,11 @@ func TestEverything(t *testing.T) {
 		t.Fatalf("Delete failed: %v", e)
 	}
 
+	e = o.Delete("has_role", user, String("member"), repoParent)
+	if e != nil {
+		t.Fatalf("Delete failed: %v", e)
+	}
+
 	e = o.Delete("has_relation", repoParent, String("parent"), repoChild)
 	if e != nil {
 		t.Fatalf("Delete failed: %v", e)
@@ -459,4 +464,32 @@ func TestQuery(t *testing.T) {
 	if e != nil {
 		t.Fatalf("Delete failed: %v", e)
 	}
+}
+
+func TestFallback(t *testing.T) {
+	oso := NewClientWithFallbackUrl("http://localhost:6000", "e_0123456789_12345_osotesttoken01xiIn", "http://localhost:8081")
+
+	user := Instance{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
+	idCounter++
+	acme := Instance{Type: "Repo", ID: fmt.Sprintf("%v", idCounter)}
+	idCounter++
+
+	t.Run("tell", func(t *testing.T) {
+		e := oso.Tell("has_permission", user, String("read"), acme)
+		if e == nil {
+			t.Fatalf("Tell should fail because it is not supported by fallback")
+		}
+	})
+
+	t.Run("authorize", func(t *testing.T) {
+		result, e := oso.AuthorizeWithContext(user, "read", acme, []Fact{
+			{
+				Name: "has_permission",
+				Args: []Instance{user, String("read"), acme},
+			},
+		})
+		if e != nil || result != true {
+			t.Fatalf("Expect authorize to succeed")
+		}
+	})
 }
