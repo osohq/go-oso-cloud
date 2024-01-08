@@ -356,10 +356,12 @@ func (c *client) ClearData() (*apiResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) GetFacts(predicate string, args []value) ([]fact, error) {
+func (c *client) GetFacts(predicate *string, args []value) ([]fact, error) {
 	url := "/facts"
 	params := make(map[string]string)
-	params["predicate"] = predicate
+	if predicate != nil {
+		params["predicate"] = *predicate
+	}
 	for i, arg := range args {
 		if arg.Type != nil {
 			params[fmt.Sprintf("args.%d.type", i)] = *arg.Type

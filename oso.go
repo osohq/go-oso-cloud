@@ -450,6 +450,13 @@ func (c client) Bulk(delete []Fact, tell []Fact) error {
 }
 
 func (c client) Get(predicate string, args ...Instance) ([]Fact, error) {
+	var jsonPredicate *string
+	if predicate == "" {
+		jsonPredicate = nil
+	} else {
+		jsonPredicate = &predicate
+	}
+
 	jsonArgs := []value{}
 	for _, arg := range args {
 		argT, err := toValue(arg)
@@ -459,7 +466,7 @@ func (c client) Get(predicate string, args ...Instance) ([]Fact, error) {
 		jsonArgs = append(jsonArgs, *argT)
 	}
 
-	resp, e := c.GetFacts(predicate, jsonArgs)
+	resp, e := c.GetFacts(jsonPredicate, jsonArgs)
 	if e != nil {
 		return nil, e
 	}

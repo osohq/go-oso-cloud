@@ -89,6 +89,10 @@ func TestEverything(t *testing.T) {
 		if e != nil || len(roles) != 2 || roles[0].Name != "has_role" {
 			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
 		}
+		facts, e := o.Get("", Instance{}, Instance{}, Instance{})
+		if e != nil || len(facts) != 3 {
+			t.Fatalf("Get facts = %+v, %v, want %d elements", facts, e, 3)
+		}
 
 		allowed_again, e := o.Authorize(user, "read", repoChild)
 		if e != nil || allowed_again != true {
