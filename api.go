@@ -329,6 +329,15 @@ func (c *client) PostActions(data actionsQuery) (*actionsResult, error) {
 	return &resBody, nil
 }
 
+func (c *client) PostBulkActions(data []actionsQuery) ([]actionsResult, error) {
+	url := "/bulk_actions"
+	var resBody []actionsResult
+	if e := c.post(url, data, &resBody, false); e != nil {
+		return nil, e
+	}
+	return resBody, nil
+}
+
 func (c *client) PostQuery(data query) (*queryResult, error) {
 	url := "/query"
 	var resBody queryResult

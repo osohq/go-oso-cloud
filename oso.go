@@ -101,6 +101,12 @@ type OsoClient interface {
 	// Fetches a list of actions which an actor can perform on a particular resource.
 	Actions(actor Instance, resource Instance) ([]string, error)
 
+	// List authorized actions for a list of resources
+	// Fetches a list of actions which an actor can perform on a list of resources.
+	//
+	// Note: this only works for resources of the same type.
+	BulkActions(actor Instance, resources []Instance, context_facts []Fact) ([][]string, error)
+
 	// List authorized actions:
 	// Fetches a list of actions which an actor can perform on a particular resource, considering the given context facts.
 	ActionsWithContext(actor Instance, resource Instance, context_facts []Fact) ([]string, error)
@@ -382,6 +388,55 @@ func (c client) ActionsWithContext(actor Instance, resource Instance, context_fa
 		return nil, err
 	}
 	return resp.Results, nil
+}
+
+func (c client) BulkActions(actor Instance, resources []Instance, context_facts []Fact) ([][]string, error) {
+	actorT, err := toValue(actor)
+	if err != nil {
+		return nil, err
+	}
+	resourcesT := []value{}
+	var resourceType *string
+	for _, resource := range resources {
+		resourceT, err := toValue(resource)
+		if err != nil {
+			return nil, err
+		}
+		if resourceType == nil {
+			resourceType = resourceT.Type
+		} else if *resourceType != *resourceT.Type {
+			return nil, fmt.Errorf("BulkActions: resources must be of the same type")
+		}
+		resourcesT = append(resourcesT, *resourceT)
+	}
+
+	queries := []actionsQuery{}
+	for i, resource := range resourcesT {
+		ContextFacts := []fact{}
+		// Only map context facts once
+		// since we reuse them across the
+		// whole query
+		if i == 0 {
+			ContextFacts = mapToInternalFacts(context_facts)
+		}
+		queries = append(queries, actionsQuery{
+			ActorType:    *actorT.Type,
+			ActorId:      *actorT.Id,
+			ResourceType: *resourceType,
+			ResourceId:   *resource.Id,
+			ContextFacts: ContextFacts,
+		})
+	}
+
+	resp, err := c.PostBulkActions(queries)
+	if err != nil {
+		return nil, err
+	}
+	results := [][]string{}
+	for _, r := range resp {
+		results = append(results, r.Results)
+	}
+	return results, nil
 }
 
 func (c client) Actions(actor Instance, resource Instance) ([]string, error) {

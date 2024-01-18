@@ -470,6 +470,89 @@ func TestQuery(t *testing.T) {
 	}
 }
 
+func TestBulkActions(t *testing.T) {
+	oso := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	err := oso.Policy(`
+		actor User {}
+
+		resource Repo {
+			roles = ["member", "admin"];
+			permissions = ["read", "delete"];
+			"read" if "member";
+			"member" if "admin";
+			"delete" if "admin";
+		}
+	`)
+	if err != nil {
+		t.Fatalf("Policy failed: %v", err)
+	}
+
+	user := Instance{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
+	idCounter++
+	repoAcme := Instance{Type: "Repo", ID: fmt.Sprintf("%v", idCounter)}
+	idCounter++
+	repoAnvil := Instance{Type: "Repo", ID: fmt.Sprintf("%v", idCounter)}
+	idCounter++
+	repoCoyote := Instance{Type: "Repo", ID: fmt.Sprintf("%v", idCounter)}
+	idCounter++
+
+	e := oso.Tell("has_role", user, String("admin"), repoAcme)
+	if e != nil {
+		t.Fatalf("Tell failed: %v", e)
+	}
+	e = oso.Tell("has_role", user, String("member"), repoAnvil)
+	if e != nil {
+		t.Fatalf("Tell failed: %v", e)
+	}
+
+	t.Run("bulk_actions", func(t *testing.T) {
+		t.Run("empty", func(t *testing.T) {
+			results, e := oso.BulkActions(user, []Instance{}, nil)
+			if e != nil || len(results) != 0 {
+				t.Fatalf("BulkActions = %v, %v, want %v", results, e, []Instance{})
+			}
+		})
+		t.Run("get all", func(t *testing.T) {
+			results, e := oso.BulkActions(user, []Instance{repoAcme, repoAnvil, repoCoyote}, nil)
+			expected := [][]string{
+				{"read", "delete"},
+				{"read"},
+				{},
+			}
+			if e != nil || len(results) != len(expected) {
+				t.Fatalf("BulkActions = %v, %v, want %v", results, e, expected)
+			}
+		})
+		t.Run("get all context", func(t *testing.T) {
+			results, e := oso.BulkActions(user, []Instance{repoAcme, repoAnvil, repoCoyote}, []Fact{
+				{
+					Name: "has_role",
+					Args: []Instance{user, String("member"), repoCoyote},
+				},
+			})
+			expected := [][]string{
+				{"read", "delete"},
+				{"read"},
+				{"read"},
+			}
+			if e != nil || len(results) != len(expected) {
+				t.Fatalf("BulkActions = %v, %v, want %v", results, e, expected)
+			}
+		})
+	})
+
+	// teardown
+	e = oso.Delete("has_role", user, String("member"), repoAcme)
+	if e != nil {
+		t.Fatalf("Delete failed: %v", e)
+	}
+
+	e = oso.Delete("has_role", user, String("member"), repoAnvil)
+	if e != nil {
+		t.Fatalf("Delete failed: %v", e)
+	}
+}
+
 func TestFallback(t *testing.T) {
 	oso := NewClientWithFallbackUrl("http://localhost:6000", "e_0123456789_12345_osotesttoken01xiIn", "http://localhost:8081")
 
