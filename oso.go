@@ -161,6 +161,9 @@ type OsoClient interface {
 	// Updates the policy in Oso Cloud. The string passed into this method should be written in Polar.
 	Policy(policy string) error
 
+	// Returns metadata about the currently active policy
+	GetPolicyMetadata() (*PolicyMetadata, error)
+
 	// Query Oso Cloud:
 	// Query Oso Cloud for any predicate, and any combination of concrete and
 	// wildcard arguments.
@@ -529,6 +532,14 @@ func (c client) Get(predicate string, args ...Instance) ([]Fact, error) {
 		return make([]Fact, 0), nil
 	}
 	return mapFromInternalFacts(resp), nil
+}
+
+func (c client) GetPolicyMetadata() (*PolicyMetadata, error) {
+	metadata, err := c.GetPolicyMetadataResult(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &metadata.Metadata, nil
 }
 
 func (c client) Policy(p string) error {

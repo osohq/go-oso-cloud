@@ -107,6 +107,20 @@ type statsResult struct {
 	NumFacts     int `json:"num_facts"`
 }
 
+type getPolicyMetadataResult struct {
+	Metadata PolicyMetadata `json:"metadata"`
+}
+
+type PolicyMetadata struct {
+	Resources map[string]ResourceMetadata `json:"resources"`
+}
+
+type ResourceMetadata struct {
+	Permissions []string          `json:"permissions"`
+	Roles       []string          `json:"roles"`
+	Relations   map[string]string `json:"relations"`
+}
+
 func (c *client) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
 	url := c.url + "/api" + path
 	req, err := http.NewRequest(method, url, body)
@@ -235,6 +249,18 @@ func (c *client) delete(path string, data interface{}, output interface{}) error
 func (c *client) GetPolicy() (*getPolicyResult, error) {
 	var result getPolicyResult
 	if e := c.get("/policy", nil, &result); e != nil {
+		return nil, e
+	}
+	return &result, nil
+}
+
+func (c *client) GetPolicyMetadataResult(version *string) (*getPolicyMetadataResult, error) {
+	var result getPolicyMetadataResult
+	params := make(map[string]string)
+	if version != nil {
+		params["version"] = *version
+	}
+	if e := c.get("/policy_metadata", params, &result); e != nil {
 		return nil, e
 	}
 	return &result, nil

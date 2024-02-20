@@ -2,6 +2,7 @@ package oso
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -551,6 +552,95 @@ func TestBulkActions(t *testing.T) {
 	if e != nil {
 		t.Fatalf("Delete failed: %v", e)
 	}
+}
+
+func TestPolicyMetadata(t *testing.T) {
+	oso := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	oso.Policy(`
+	actor User { }
+
+	resource Organization {
+		roles = ["admin", "member"];
+		permissions = [
+			"read", "add_member", "repository.create",
+		];
+
+		# role hierarchy:
+		# admins inherit all member permissions
+		"member" if "admin";
+
+		# org-level permissions
+		"read" if "member";
+		"add_member" if "admin";
+		# permission to create a repository
+		# in the organization
+		"repository.create" if "admin";
+	}
+
+	resource Repository {
+		permissions = ["read", "delete"];
+		roles = ["member", "admin"];
+		relations = {
+			organization: Organization,
+		};
+
+		# inherit all roles from the organization
+		role if role on "organization";
+
+		# admins inherit all member permissions
+		"member" if "admin";
+
+		"read" if "member";
+		"delete" if "admin";
+	}
+	`)
+
+	t.Run("GetPolicyMetadata", func(t *testing.T) {
+		result, e := oso.GetPolicyMetadata()
+		if e != nil {
+			t.Fatalf("Query failed, %s", e)
+		}
+		expected := PolicyMetadata{
+			Resources: map[string]ResourceMetadata{
+				"Organization": {
+					Permissions: []string{
+						"add_member",
+						"read",
+						"repository.create",
+					},
+					Roles:     []string{"admin", "member"},
+					Relations: map[string]string{},
+				},
+				"Repository": {
+					Permissions: []string{
+						"delete",
+						"read",
+					},
+					Roles: []string{
+						"admin",
+						"member",
+					},
+					Relations: map[string]string{
+						"organization": "Organization",
+					},
+				},
+				"User": {
+					Permissions: []string{},
+					Roles:       []string{},
+					Relations:   map[string]string{},
+				},
+				"global": {
+					Permissions: []string{},
+					Roles:       []string{},
+					Relations:   map[string]string{},
+				},
+			},
+		}
+
+		if !reflect.DeepEqual(*result, expected) {
+			t.Fatalf("GetPolicyMetadata failed,\ngot:\n%v\nexpected:\n%v", *result, expected)
+		}
+	})
 }
 
 func TestFallback(t *testing.T) {
