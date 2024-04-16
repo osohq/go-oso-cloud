@@ -23,6 +23,8 @@ type Fact struct {
 	Args []Instance
 }
 
+type AuthorizeResult authorizeResult
+
 func String(s string) Instance {
 	return Instance{Type: "String", ID: s}
 }
@@ -172,6 +174,14 @@ type OsoClient interface {
 	// Add fact:
 	// Adds a fact named predicate with the provided arguments.
 	Tell(predicate string, args ...Instance) error
+
+	// Check a permission depending on data both in Oso Cloud and stored in a local database:
+	// Returns a SQL query to run against the local database.
+	AuthorizeLocal(actor Instance, action string, resource Instance) (string, error)
+
+	// List authorized resources depending on data both in Oso Cloud and stored in a local database:
+	// Returns a SQL query to run against the local database.
+	ListLocal(actor Instance, action string, resource string, column string) (string, error)
 }
 
 type client struct {
@@ -182,6 +192,57 @@ type client struct {
 	lastOffset         string
 	fallbackUrl        string
 	fallbackHttpClient *http.Client
+	dataBindings       string
+}
+
+// Create a new Oso client with a fallbackURL and custom logger
+//
+// See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
+// for documentation on the logger interfaces supported.
+func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string, fallbackUrl string, logger interface{}, dataBindings string) OsoClient {
+	retryClient := retryablehttp.NewClient()
+	retryClient.RetryMax = 10
+	retryClient.RetryWaitMin = 10 * time.Millisecond
+	retryClient.RetryWaitMax = 1 * time.Second
+	retryClient.Logger = logger
+
+	var userAgent string
+	rv, err := os.ReadFile("VERSION")
+	if err != nil {
+		userAgent = "Oso Cloud (golang " + runtime.Version() + ")"
+	} else {
+		userAgent = "Oso Cloud (golang " + runtime.Version() + "; rv:" + strings.TrimSuffix(string(rv), "\n") + ")"
+	}
+
+	lastOffset := ""
+
+	var fallbackClient *http.Client
+	if fallbackUrl != "" {
+		fallbackClient = &http.Client{}
+	} else {
+		fallbackClient = nil
+	}
+
+	if dataBindings != "" {
+		dataBindingsContents, err := os.ReadFile(dataBindings)
+		if err != nil {
+			panic(err)
+		} else {
+			dataBindings = string(dataBindingsContents)
+		}
+	}
+
+	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient, dataBindings}
+}
+
+// Create a new default Oso client
+func NewClient(url string, apiKey string) OsoClient {
+	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, "", nil, "")
+}
+
+// Create a new Oso client with a fallback URL configured
+func NewClientWithFallbackUrl(url string, apiKey string, fallbackUrl string) OsoClient {
+	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, fallbackUrl, nil, "")
 }
 
 // Create a new Oso client with a custom logger
@@ -189,61 +250,69 @@ type client struct {
 // See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
 // for documentation on the logger interfaces supported.
 func NewClientWithLogger(url string, apiKey string, logger interface{}) OsoClient {
-	retryClient := retryablehttp.NewClient()
-	retryClient.RetryMax = 10
-	retryClient.RetryWaitMin = 10 * time.Millisecond
-	retryClient.RetryWaitMax = 1 * time.Second
-	retryClient.Logger = logger
-
-	var userAgent string
-	rv, err := os.ReadFile("VERSION")
-	if err != nil {
-		userAgent = "Oso Cloud (golang " + runtime.Version() + ")"
-	} else {
-		userAgent = "Oso Cloud (golang " + runtime.Version() + "; rv:" + strings.TrimSuffix(string(rv), "\n") + ")"
-	}
-	lastOffset := ""
-	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, "", nil}
-
+	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, "", logger, "")
 }
 
-// Create a new Oso client with a fallbackURL and custom logger
-//
-// See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
-// for documentation on the logger interfaces supported.
 func NewClientWithFallbackUrlAndLogger(url string, apiKey string, fallbackUrl string, logger interface{}) OsoClient {
-	retryClient := retryablehttp.NewClient()
-	retryClient.RetryMax = 10
-	retryClient.RetryWaitMin = 10 * time.Millisecond
-	retryClient.RetryWaitMax = 1 * time.Second
-	retryClient.Logger = logger
+	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, fallbackUrl, logger, "")
+}
 
-	var userAgent string
-	rv, err := os.ReadFile("VERSION")
+func NewClientWithDataBindings(url string, apiKey string, dataBindings string) OsoClient {
+	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, "", nil, dataBindings)
+}
+
+func NewClientWithFallbackUrlAndDataBindings(url string, apiKey string, fallbackUrl string, dataBindings string) OsoClient {
+	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, fallbackUrl, nil, dataBindings)
+}
+
+func NewClientWithLoggerAndDataBindings(url string, apiKey string, logger interface{}, dataBindings string) OsoClient {
+	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, "", logger, dataBindings)
+}
+
+
+func (c client) AuthorizeLocal(actor Instance, action string, resource Instance) (string, error) {
+	actorT, err := toValue(actor)
 	if err != nil {
-		userAgent = "Oso Cloud (golang " + runtime.Version() + ")"
-	} else {
-		userAgent = "Oso Cloud (golang " + runtime.Version() + "; rv:" + strings.TrimSuffix(string(rv), "\n") + ")"
+		return "", err
 	}
-	lastOffset := ""
-
-	if fallbackUrl != "" {
-		fallbackClient := &http.Client{}
-		return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient}
-	} else {
-		return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, nil}
+	resourceT, err := toValue(resource)
+	if err != nil {
+		return "", err
+	}
+	payload := authorizeQuery{
+		ActorType:    *actorT.Type,
+		ActorId:      *actorT.Id,
+		Action:       action,
+		ResourceType: *resourceT.Type,
+		ResourceId:   *resourceT.Id,
+		ContextFacts: []fact{},
 	}
 
+	resp, err := c.PostAuthorizeQuery(payload)
+	if err != nil {
+		return "", err
+	}
+	return resp.Sql, nil
 }
 
-// Create a new default Oso client
-func NewClient(url string, apiKey string) OsoClient {
-	return NewClientWithFallbackUrlAndLogger(url, apiKey, "", nil)
-}
+func (c client) ListLocal(actor Instance, action string, resourceType string, column string) (string, error) {
+	actorT, err := toValue(actor)
+	if err != nil {
+		return "", err
+	}
+	payload := listQuery{
+		ActorType:    *actorT.Type,
+		ActorId:      *actorT.Id,
+		Action:       action,
+		ResourceType: resourceType,
+		ContextFacts: []fact{},
+	}
 
-// Create a new Oso client with a fallback URL configured
-func NewClientWithFallbackUrl(url string, apiKey string, fallbackUrl string) OsoClient {
-	return NewClientWithFallbackUrlAndLogger(url, apiKey, fallbackUrl, nil)
+	resp, err := c.PostListQuery(payload, column)
+	if err != nil {
+		return "", err
+	}
+	return resp.Sql, nil
 }
 
 func (c client) AuthorizeWithContext(actor Instance, action string, resource Instance, context_facts []Fact) (bool, error) {
@@ -345,7 +414,7 @@ func (c client) AuthorizeResources(actor Instance, action string, resources []In
 	return c.AuthorizeResourcesWithContext(actor, action, resources, nil)
 }
 
-func (c client) ListWithContext(actor Instance, action string, resource string, context_facts []Fact) ([]string, error) {
+func (c client) ListWithContext(actor Instance, action string, resourceType string, context_facts []Fact) ([]string, error) {
 	actorT, err := toValue(actor)
 	if err != nil {
 		return nil, err
@@ -354,7 +423,7 @@ func (c client) ListWithContext(actor Instance, action string, resource string, 
 		ActorType:    *actorT.Type,
 		ActorId:      *actorT.Id,
 		Action:       action,
-		ResourceType: resource,
+		ResourceType: resourceType,
 		ContextFacts: mapToInternalFacts(context_facts),
 	}
 
@@ -365,8 +434,8 @@ func (c client) ListWithContext(actor Instance, action string, resource string, 
 	return resp.Results, nil
 }
 
-func (c client) List(actor Instance, action string, resource string, context_facts []Fact) ([]string, error) {
-	return c.ListWithContext(actor, action, resource, nil)
+func (c client) List(actor Instance, action string, resourceType string, context_facts []Fact) ([]string, error) {
+	return c.ListWithContext(actor, action, resourceType, nil)
 }
 
 func (c client) ActionsWithContext(actor Instance, resource Instance, context_facts []Fact) ([]string, error) {

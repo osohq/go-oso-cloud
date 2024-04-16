@@ -543,7 +543,7 @@ func TestBulkActions(t *testing.T) {
 	})
 
 	// teardown
-	e = oso.Delete("has_role", user, String("member"), repoAcme)
+	e = oso.Delete("has_role", user, String("admin"), repoAcme)
 	if e != nil {
 		t.Fatalf("Delete failed: %v", e)
 	}

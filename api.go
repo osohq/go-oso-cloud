@@ -121,6 +121,21 @@ type ResourceMetadata struct {
 	Relations   map[string]string `json:"relations"`
 }
 
+type localAuthQuery struct {
+	Query        authorizeQuery `json:"query"`
+	DataBindings string         `json:"data_bindings"`
+}
+
+type localListQuery struct {
+	Query        listQuery `json:"query"`
+	Column       string    `json:"column"`
+	DataBindings string    `json:"data_bindings"`
+}
+
+type localQueryResult struct {
+	Sql string `json:"sql"`
+}
+
 func (c *client) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
 	url := c.url + "/api" + path
 	req, err := http.NewRequest(method, url, body)
@@ -410,4 +425,31 @@ func (c *client) GetFacts(predicate *string, args []value) ([]fact, error) {
 		return nil, e
 	}
 	return resBody, nil
+}
+
+func (c *client) PostAuthorizeQuery(query authorizeQuery) (*localQueryResult, error) {
+	url := "/authorize_query"
+	data := localAuthQuery{
+		Query:        query,
+		DataBindings: c.dataBindings,
+	}
+	var resBody localQueryResult
+	if e := c.post(url, data, &resBody, false); e != nil {
+		return nil, e
+	}
+	return &resBody, nil
+}
+
+func (c *client) PostListQuery(query listQuery, column string) (*localQueryResult, error) {
+	url := "/list_query"
+	data := localListQuery{
+		Query:        query,
+		Column:       column,
+		DataBindings: c.dataBindings,
+	}
+	var resBody localQueryResult
+	if e := c.post(url, data, &resBody, false); e != nil {
+		return nil, e
+	}
+	return &resBody, nil
 }
