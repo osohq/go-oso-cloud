@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,14 @@ type AuthorizeResult authorizeResult
 
 func String(s string) Instance {
 	return Instance{Type: "String", ID: s}
+}
+
+func Integer(i int64) Instance {
+	return Instance{Type: "Integer", ID: strconv.FormatInt(i, 10)}
+}
+
+func Boolean(b bool) Instance {
+	return Instance{Type: "Boolean", ID: strconv.FormatBool(b)}
 }
 
 func fromValue(value value) (*Instance, error) {
@@ -182,6 +191,11 @@ type OsoClient interface {
 	// List authorized resources depending on data both in Oso Cloud and stored in a local database:
 	// Returns a SQL query to run against the local database.
 	ListLocal(actor Instance, action string, resource string, column string) (string, error)
+
+	// Fetches a query that can be run against your database to determine the actions
+	// an actor can perform on a resource.
+	// Returns a SQL query to run against the local database.
+	ActionsLocal(actor Instance, resource Instance) (string, error)
 }
 
 type client struct {
@@ -269,7 +283,6 @@ func NewClientWithLoggerAndDataBindings(url string, apiKey string, logger interf
 	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, "", logger, dataBindings)
 }
 
-
 func (c client) AuthorizeLocal(actor Instance, action string, resource Instance) (string, error) {
 	actorT, err := toValue(actor)
 	if err != nil {
@@ -309,6 +322,30 @@ func (c client) ListLocal(actor Instance, action string, resourceType string, co
 	}
 
 	resp, err := c.PostListQuery(payload, column)
+	if err != nil {
+		return "", err
+	}
+	return resp.Sql, nil
+}
+
+func (c client) ActionsLocal(actor Instance, resource Instance) (string, error) {
+	actorT, err := toValue(actor)
+	if err != nil {
+		return "", err
+	}
+	resourceT, err := toValue(resource)
+	if err != nil {
+		return "", err
+	}
+	payload := actionsQuery{
+		ActorType:    *actorT.Type,
+		ActorId:      *actorT.Id,
+		ResourceType: *resourceT.Type,
+		ResourceId:   *resourceT.Id,
+		ContextFacts: []fact{},
+	}
+
+	resp, err := c.PostActionsQuery(payload)
 	if err != nil {
 		return "", err
 	}

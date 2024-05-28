@@ -132,6 +132,11 @@ type localListQuery struct {
 	DataBindings string    `json:"data_bindings"`
 }
 
+type localActionsQuery struct {
+	Query        actionsQuery `json:"query"`
+	DataBindings string       `json:"data_bindings"`
+}
+
 type localQueryResult struct {
 	Sql string `json:"sql"`
 }
@@ -195,13 +200,13 @@ func (c *client) doRequest(req *http.Request, output interface{}, isMutation boo
 	if e != nil {
 		return e
 	}
-	if res.StatusCode >= 400 {
+	if res.StatusCode < 200 || res.StatusCode >= 400 {
 		var apiErr apiError
 		e = json.Unmarshal(resBodyJSON, &apiErr)
 		if e != nil {
 			return e
 		}
-		return errors.New(apiErr.Message)
+		return errors.New("Oso Cloud error: " + apiErr.Message)
 	}
 	if isMutation {
 		c.lastOffset = res.Header.Get("OsoOffset")
@@ -445,6 +450,19 @@ func (c *client) PostListQuery(query listQuery, column string) (*localQueryResul
 	data := localListQuery{
 		Query:        query,
 		Column:       column,
+		DataBindings: c.dataBindings,
+	}
+	var resBody localQueryResult
+	if e := c.post(url, data, &resBody, false); e != nil {
+		return nil, e
+	}
+	return &resBody, nil
+}
+
+func (c *client) PostActionsQuery(query actionsQuery) (*localQueryResult, error) {
+	url := "/actions_query"
+	data := localActionsQuery{
+		Query:        query,
 		DataBindings: c.dataBindings,
 	}
 	var resBody localQueryResult

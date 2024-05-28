@@ -3,6 +3,7 @@ package oso
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -120,6 +121,15 @@ func TestEverything(t *testing.T) {
 	e = o.Delete("has_relation", repoParent, String("parent"), repoChild)
 	if e != nil {
 		t.Fatalf("Delete failed: %v", e)
+	}
+}
+
+func TestAPIError(t *testing.T) {
+	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	user := Instance{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
+	e := o.Tell("does_not_exist", user, String("taco"))
+	if e == nil || !strings.HasPrefix(e.Error(), "Oso Cloud error: ") {
+		t.Fatalf("Invalid API request had unexpected result: %v", e)
 	}
 }
 

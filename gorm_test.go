@@ -2,6 +2,7 @@ package oso
 
 import (
 	"os"
+	"reflect"
 	"testing"
 
 	"gorm.io/driver/postgres"
@@ -145,6 +146,18 @@ func TestLocalDataFiltering(t *testing.T) {
 		db.Raw(query).Scan(&authorizeResult)
 		if authorizeResult.Allowed {
 			t.Fatalf("expected denied, got %t", authorizeResult.Allowed)
+		}
+	})
+
+	t.Run("actions", func(t *testing.T) {
+		query, err := oso.ActionsLocal(bob, environmentAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actions []string
+		db.Raw(query).Pluck("actions", &actions)
+		if !reflect.DeepEqual(actions, []string{"read"}) {
+			t.Fatalf("expected [read], got %v", actions)
 		}
 	})
 
