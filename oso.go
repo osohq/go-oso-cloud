@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hashicorp/go-retryablehttp"
 )
 
@@ -207,6 +208,7 @@ type client struct {
 	fallbackUrl        string
 	fallbackHttpClient *http.Client
 	dataBindings       string
+	clientId 					 string
 }
 
 // Create a new Oso client with a fallbackURL and custom logger
@@ -246,7 +248,9 @@ func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string,
 		}
 	}
 
-	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient, dataBindings}
+	clientId := uuid.New().String()
+
+	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient, dataBindings, clientId}
 }
 
 // Create a new default Oso client

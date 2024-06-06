@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -152,6 +153,9 @@ func (c *client) apiCall(method string, path string, body io.Reader) (*http.Requ
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("X-OsoApiVersion", "0")
+	req.Header.Set("X-Request-ID", uuid.New().String())
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Oso-Instance-Id", c.clientId)
 
 	if c.lastOffset != "" {
 		req.Header.Set("OsoOffset", c.lastOffset)
@@ -206,7 +210,8 @@ func (c *client) doRequest(req *http.Request, output interface{}, isMutation boo
 		if e != nil {
 			return e
 		}
-		return errors.New("Oso Cloud error: " + apiErr.Message)
+		requestID := res.Header.Get("X-Request-ID")
+		return errors.New("Oso Cloud error: " + apiErr.Message + " (Request ID: " + requestID + ")")
 	}
 	if isMutation {
 		c.lastOffset = res.Header.Get("OsoOffset")
