@@ -28,12 +28,12 @@ func TestLocalDataFiltering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alice := Instance{Type: "User", ID: "alice"}
-	bob := Instance{Type: "User", ID: "bob"}
-	tenant := Instance{Type: "Tenant", ID: "1"}
-	environment1 := Instance{Type: "Environment", ID: "1"}
-	environment2 := Instance{Type: "Environment", ID: "2"}
-	environmentAny := Instance{Type: "Environment", ID: "12345"}
+	alice := Value{Type: "User", ID: "alice"}
+	bob := Value{Type: "User", ID: "bob"}
+	tenant := Value{Type: "Tenant", ID: "1"}
+	environment1 := Value{Type: "Environment", ID: "1"}
+	environment2 := Value{Type: "Environment", ID: "2"}
+	environmentAny := Value{Type: "Environment", ID: "12345"}
 
 	// setup
 	policy, err := os.ReadFile("../../feature/src/tests/policies/oso_control.polar")
@@ -44,11 +44,11 @@ func TestLocalDataFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = oso.Tell("has_role", alice, String("member"), tenant)
+	err = oso.Insert(NewFact("has_role", alice, String("member"), tenant))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = oso.Tell("is_god", bob)
+	err = oso.Insert(NewFact("is_god", bob))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,11 +162,11 @@ func TestLocalDataFiltering(t *testing.T) {
 	})
 
 	// teardown
-	err = oso.Delete("has_role", alice, String("member"), tenant)
+	err = oso.Delete(NewFactPattern("has_role", alice, String("member"), tenant))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = oso.Delete("is_god", bob)
+	err = oso.Delete(NewFactPattern("is_god", bob))
 	if err != nil {
 		t.Fatal(err)
 	}

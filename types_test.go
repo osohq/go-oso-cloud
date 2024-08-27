@@ -8,29 +8,22 @@ import (
 func TestBuiltinTypes(t *testing.T) {
 	oso := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
 	oso.Policy("declare is_weird(Integer, String, Boolean);")
-	e := oso.Bulk([]Fact{}, []Fact{
-		{
-			Name: "is_weird",
-			Args: []Instance{Integer(10), String("yes"), Boolean(true)},
-		},
+	e := oso.Insert(Fact{
+		Predicate: "is_weird",
+		Args:      []Value{Integer(10), String("yes"), Boolean(true)},
 	})
 	if e != nil {
 		t.Fatalf("Bulk failed: %v", e)
 	}
-	defer oso.Bulk([]Fact{{Name: "is_weird", Args: []Instance{{}, {}, {}}}}, []Fact{})
+	defer oso.Delete(NewFactPattern("is_weird", nil, nil, nil))
 
-	actual, e := oso.Get("is_weird", Integer(10), String("yes"), Boolean(true))
+	actual, e := oso.Get(NewFactPattern("is_weird", Integer(10), String("yes"), Boolean(true)))
 	if e != nil {
 		t.Fatalf("Get failed: %v", e)
 	}
-	expected := []Fact{{
-		Name: "is_weird",
-		Args: []Instance{
-			Instance{Type: "Integer", ID: "10"},
-			Instance{Type: "String", ID: "yes"},
-			Instance{Type: "Boolean", ID: "true"},
-		},
-	}}
+	expected := []Fact{
+		NewFact("is_weird", NewValue("Integer", "10"), NewValue("String", "yes"), NewValue("Boolean", "true")),
+	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("Got:%v, expected:%v", actual, expected)
 	}

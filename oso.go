@@ -3,7 +3,7 @@
 package oso
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 	"os"
 	"runtime"
@@ -15,86 +15,162 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
-type Instance struct {
+// A Value is an argument to a [Fact]. Example:
+//
+//	Value{Type: "User", ID: "alice"}
+//	NewValue("User", "alice")
+//
+// A Value must have a non-empty Type and ID. Empty strings in either field are invalid.
+type Value struct {
 	Type string
 	ID   string
 }
 
+// NewValue is a convenience constructor for [Value].
+func NewValue(typ string, id string) Value {
+	return Value{Type: typ, ID: id}
+}
+
+// Marker interface representing the union of [Fact] and [FactPattern].
+type IntoFactPattern interface {
+	intoFactPattern() (*factPattern, error)
+}
+
+// A Fact is the fundamental data model of Oso Cloud.
+// See also: https://www.osohq.com/docs/concepts/oso-cloud-data-model
+// A Fact must have a non-empty Predicate and each member of Args must be a valid
+// [Value] (eg. they must all have non-empty Types and IDs).
+//
+// Example:
+//
+//	NewFact("has_role", NewValue("User", "alice"), String("owner"), NewValue("Repo", "acme"))
 type Fact struct {
-	Name string
-	Args []Instance
+	Predicate string
+	Args      []Value
+}
+
+// NewFact is a convenience constructor for [Fact].
+func NewFact(predicate string, args ...Value) Fact {
+	return Fact{Predicate: predicate, Args: args}
+}
+
+// A FactPattern lets you match facts based on the given (non-empty) Predicate
+// and Args. The members of Args can be a [Value] (matching arguments of that
+// exact value at the given position), a [ValueOfType] (matching facts with an
+// argument of the given type at the given position), or nil (matching facts
+// with any value at the given position).
+//
+// Example:
+//
+//	NewFactPattern("has_role", NewValue("User", "alice"), nil, NewValueOfType("Repo"))
+//
+// will match all "has_role" facts where the first argument is the User
+// "alice", the second argument is anything, and the third argument is a
+// Repo.
+type FactPattern struct {
+	Predicate string
+	Args      []ValuePattern
+}
+
+// NewFactPattern is a convenience constructor for [FactPattern].
+func NewFactPattern(predicate string, args ...ValuePattern) FactPattern {
+	return FactPattern{Predicate: predicate, Args: args}
+}
+
+// A ValueOfType is used in a [FactPattern] to match an argument having the given Type.
+// Type must not be an empty string.
+type ValueOfType struct {
+	Type string
+}
+
+// NewValueOfType is a convenience constructor for [ValueOfType].
+func NewValueOfType(t string) ValueOfType {
+	return ValueOfType{Type: t}
+}
+
+// Marker interface for the union type of [Value] and [ValueOfType].
+// Used as arguments to [FactPattern].
+type ValuePattern interface {
+	typ() string
+	id() string
+}
+
+func (v Value) typ() string {
+	return v.Type
+}
+func (v Value) id() string {
+	return v.ID
+}
+
+func (v ValueOfType) typ() string {
+	return v.Type
+}
+func (v ValueOfType) id() string {
+	return ""
 }
 
 type AuthorizeResult authorizeResult
 
-func String(s string) Instance {
-	return Instance{Type: "String", ID: s}
+// TODO explain what this ^ is and why it exists- something about local authz?
+
+// Constructs a [Value] from the given string.
+func String(s string) Value {
+	return Value{Type: "String", ID: s}
 }
 
-func Integer(i int64) Instance {
-	return Instance{Type: "Integer", ID: strconv.FormatInt(i, 10)}
+// Constructs a [Value] from the given integer.
+func Integer(i int64) Value {
+	return Value{Type: "Integer", ID: strconv.FormatInt(i, 10)}
 }
 
-func Boolean(b bool) Instance {
-	return Instance{Type: "Boolean", ID: strconv.FormatBool(b)}
-}
-
-func fromValue(value value) (*Instance, error) {
-	var typ, id string
-	if value.Type == nil {
-		typ = ""
-	} else {
-		typ = *value.Type
+// Constructs a [Value] from the given boolean.
+func Boolean(b bool) Value {
+	ID := "false"
+	if b {
+		ID = "true"
 	}
-	if value.Id == nil {
-		id = ""
-	} else {
-		id = *value.Id
-	}
-	return &Instance{Type: typ, ID: id}, nil
+	return Value{Type: "Boolean", ID: ID}
 }
 
-func toValue(instance Instance) (*value, error) {
-	var typ, id *string
+func fromValue(value concreteValue) (*Value, error) {
+	return &Value{Type: value.Type, ID: value.Id}, nil
+}
+
+func toConcreteValue(instance Value) (*concreteValue, error) {
 	if instance.Type == "" {
-		typ = nil
-	} else {
-		typ = &instance.Type
+		return nil, errors.New("Value must have a non-empty Type")
 	}
 	if instance.ID == "" {
-		id = nil
-	} else {
-		id = &instance.ID
+		return nil, errors.New("Value must have a non-empty ID")
 	}
-
-	return &value{Id: id, Type: typ}, nil
+	return &concreteValue{Id: instance.ID, Type: instance.Type}, nil
 }
 
 func toInternalFact(f Fact) (*fact, error) {
-	valueArgs := []value{}
+	valueArgs := []concreteValue{}
 	for _, arg := range f.Args {
-		arg, _ := toValue(arg)
+		arg, _ := toConcreteValue(arg)
 		valueArgs = append(valueArgs, *arg)
 	}
 
-	return &fact{Predicate: f.Name, Args: valueArgs}, nil
+	return &fact{Predicate: f.Predicate, Args: valueArgs}, nil
 }
 
 func fromInternalFact(f fact) (*Fact, error) {
-	instanceArgs := []Instance{}
+	instanceArgs := []Value{}
 	for _, arg := range f.Args {
 		arg, _ := fromValue(arg)
 		instanceArgs = append(instanceArgs, *arg)
 	}
 
-	return &Fact{Name: f.Predicate, Args: instanceArgs}, nil
+	return &Fact{Predicate: f.Predicate, Args: instanceArgs}, nil
 }
 
 func mapToInternalFacts(facts []Fact) []fact {
 	payload := []fact{}
 	for _, f := range facts {
-		internal_fact, _ := toInternalFact(f)
-		payload = append(payload, *internal_fact)
+		internalFact, _ := toInternalFact(f)
+		payload = append(payload, *internalFact)
 	}
 	return payload
 }
@@ -102,104 +178,140 @@ func mapToInternalFacts(facts []Fact) []fact {
 func mapFromInternalFacts(facts []fact) []Fact {
 	payload := []Fact{}
 	for _, f := range facts {
-		external_fact, _ := fromInternalFact(f)
-		payload = append(payload, *external_fact)
+		externalFact, _ := fromInternalFact(f)
+		payload = append(payload, *externalFact)
 	}
 	return payload
 }
 
-type OsoClient interface {
-	// List authorized actions:
-	// Fetches a list of actions which an actor can perform on a particular resource.
-	Actions(actor Instance, resource Instance) ([]string, error)
-
-	// List authorized actions for a list of resources
-	// Fetches a list of actions which an actor can perform on a list of resources.
-	//
-	// Note: this only works for resources of the same type.
-	BulkActions(actor Instance, resources []Instance, context_facts []Fact) ([][]string, error)
-
-	// List authorized actions:
-	// Fetches a list of actions which an actor can perform on a particular resource, considering the given context facts.
-	ActionsWithContext(actor Instance, resource Instance, context_facts []Fact) ([]string, error)
-
-	// Check a permission:
-	// Determines whether or not an action is allowed, based on a combination of authorization data and policy logic.
-	Authorize(actor Instance, action string, resource Instance) (bool, error)
-
-	// Check authorized resources:
-	// Returns a subset of resources on which an actor can perform a particular action.
-	// Ordering and duplicates, if any exist, are preserved.
-	AuthorizeResources(actor Instance, action string, resources []Instance) ([]Instance, error)
-
-	// Check authorized resources:
-	// Returns a subset of resources on which an actor can perform a particular action, considering the given context facts.
-	// Ordering and duplicates, if any exist, are preserved.
-	AuthorizeResourcesWithContext(actor Instance, action string, resources []Instance, context_facts []Fact) ([]Instance, error)
-	// Check a permission:
-	// Determines whether or not an action is allowed, based on a combination of authorization data (including the given context facts) and policy logic.
-	AuthorizeWithContext(actor Instance, action string, resource Instance, context_facts []Fact) (bool, error)
-
-	// Transactionally delete and add facts:
-	// Deletes and adds many facts in one atomic transaction. The deletions are performed before the adds.
-	// Does not throw an error when the facts to delete are not found.
-	Bulk(delete []Fact, tell []Fact) error
-
-	// Delete many facts:
-	// Deletes many facts at once. Does not throw an error when some of the facts are not found.
-	BulkDelete(facts []Fact) error
-
-	// Add many facts:
-	// Adds many facts at once.
-	BulkTell(facts []Fact) error
-
-	// Delete fact:
-	// Deletes a fact. Does not throw an error if the fact is not found.
-	Delete(predicate string, args ...Instance) error
-
-	// List facts:
-	// Lists facts that are stored in Oso Cloud. Can be used to check the existence of a particular fact, or used to fetch all facts that have a particular argument.
-	Get(predicate string, args ...Instance) ([]Fact, error)
-
-	// List authorized resources:
-	// Fetches a list of resource ids on which an actor can perform a particular action.
-	List(actor Instance, action string, resource string, context_facts []Fact) ([]string, error)
-
-	// List authorized resources:
-	// Fetches a list of resource ids on which an actor can perform a particular action, considering the given context facts.
-	ListWithContext(actor Instance, action string, resource string, context_facts []Fact) ([]string, error)
-
-	// Update the active policy:
-	// Updates the policy in Oso Cloud. The string passed into this method should be written in Polar.
-	Policy(policy string) error
-
-	// Returns metadata about the currently active policy
-	GetPolicyMetadata() (*PolicyMetadata, error)
-
-	// Query Oso Cloud:
-	// Query Oso Cloud for any predicate, and any combination of concrete and
-	// wildcard arguments.
-	Query(predicate string, args ...*Instance) ([]Fact, error)
-
-	// Add fact:
-	// Adds a fact named predicate with the provided arguments.
-	Tell(predicate string, args ...Instance) error
-
-	// Check a permission depending on data both in Oso Cloud and stored in a local database:
-	// Returns a SQL query to run against the local database.
-	AuthorizeLocal(actor Instance, action string, resource Instance) (string, error)
-
-	// List authorized resources depending on data both in Oso Cloud and stored in a local database:
-	// Returns a SQL query to run against the local database.
-	ListLocal(actor Instance, action string, resource string, column string) (string, error)
-
-	// Fetches a query that can be run against your database to determine the actions
-	// an actor can perform on a resource.
-	// Returns a SQL query to run against the local database.
-	ActionsLocal(actor Instance, resource Instance) (string, error)
+func (fact Fact) intoFactPattern() (*factPattern, error) {
+	args := []variableValue{}
+	for _, arg := range fact.Args {
+		arg := &variableValue{Type: &arg.Type, Id: &arg.ID} // these shouldn't be nil / empty
+		args = append(args, *arg)
+	}
+	return &factPattern{Predicate: fact.Predicate, Args: args}, nil
 }
 
-type client struct {
+func (_factPattern FactPattern) intoFactPattern() (*factPattern, error) {
+	args := []variableValue{}
+	for _, arg := range _factPattern.Args {
+		arg, err := toVariableValue(arg)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, *arg)
+	}
+	return &factPattern{Predicate: _factPattern.Predicate, Args: args}, nil
+}
+
+func toVariableValue(v ValuePattern) (*variableValue, error) {
+	if v == nil {
+		return &variableValue{}, nil
+	}
+
+	var typ string
+	var id *string
+	if value, isValue := v.(Value); isValue {
+		if value.Type == "" || value.ID == "" {
+			return nil, errors.New("Value must have non-empty Type and ID")
+		}
+		typ = value.Type
+		id = &value.ID
+	}
+
+	if valueOfType, isValueOfType := v.(ValueOfType); isValueOfType {
+		if valueOfType.Type == "" {
+			return nil, errors.New("ValueOfType must have non-empty Type")
+		}
+		typ = valueOfType.Type
+	}
+
+	return &variableValue{Type: &typ, Id: id}, nil
+}
+
+// A BatchTransaction lets you group many Fact inserts and deletes into a single HTTP call.
+// See [OsoClientImpl.Batch]
+type BatchTransaction interface {
+	// Insert the given [Fact] into Oso Cloud as part of the transaction.
+	Insert(fact Fact) error
+	// Delete the given [Fact] or all facts matching the given [FactPattern] from Oso Cloud as part of the transaction.
+	Delete(factPattern IntoFactPattern) error
+	privateMarker()
+}
+
+type batchTransaction struct {
+	changesets []factChangeset
+}
+
+func (tx *batchTransaction) Insert(data Fact) error {
+	f, err := toInternalFact(data)
+	if err != nil {
+		return err
+	}
+	var changeset batchInserts
+	lastIndex := len(tx.changesets) - 1
+	if lastIndex >= 0 && (tx.changesets)[lastIndex].isInsert() {
+		changeset = (tx.changesets)[lastIndex].(batchInserts)
+		changeset.Inserts = append(changeset.Inserts, *f)
+		tx.changesets[lastIndex] = changeset
+	} else {
+		// either this is the first changeset, or the last one was a delete.
+		changeset = batchInserts{Inserts: []fact{*f}}
+		tx.changesets = append(tx.changesets, changeset)
+	}
+
+	return nil
+}
+func (tx *batchTransaction) Delete(data IntoFactPattern) error {
+	f, err := data.intoFactPattern()
+	if err != nil {
+		return err
+	}
+
+	var changeset batchDeletes
+	lastIndex := len(tx.changesets) - 1
+	if lastIndex >= 0 && !(tx.changesets)[lastIndex].isInsert() {
+		changeset = (tx.changesets)[lastIndex].(batchDeletes)
+		changeset.Deletes = append(changeset.Deletes, *f)
+		tx.changesets[lastIndex] = changeset
+	} else {
+		// either this is the first changeset, or the last one was an insert.
+		changeset = batchDeletes{Deletes: []factPattern{*f}}
+		tx.changesets = append(tx.changesets, changeset)
+	}
+
+	return nil
+}
+
+func (tx batchTransaction) privateMarker() {}
+
+// An interface to make it possible to swap out Oso Cloud implementations (eg. for unit tests).
+// For more information on these functions, see [OsoClientImpl].
+type OsoClient interface {
+	Insert(fact Fact) error
+	Delete(factOrFactPattern IntoFactPattern) error
+	Batch(func(tx BatchTransaction)) error
+	Get(factOrFactPattern IntoFactPattern) ([]Fact, error)
+
+	Policy(policy string) error
+	GetPolicyMetadata() (*PolicyMetadata, error)
+
+	Actions(actor Value, resource Value) ([]string, error)
+	ActionsWithContext(actor Value, resource Value, contextFacts []Fact) ([]string, error)
+	Authorize(actor Value, action string, resource Value) (bool, error)
+	AuthorizeWithContext(actor Value, action string, resource Value, contextFacts []Fact) (bool, error)
+	List(actor Value, action string, resource string, contextFacts []Fact) ([]string, error)
+	ListWithContext(actor Value, action string, resource string, contextFacts []Fact) ([]string, error)
+	BuildQuery(query QueryFact) QueryBuilder
+	AuthorizeLocal(actor Value, action string, resource Value) (string, error)
+	ListLocal(actor Value, action string, resource string, column string) (string, error)
+	ActionsLocal(actor Value, resource Value) (string, error)
+}
+
+// The default implementation of [OsoClient]. Create an instance using the constructor
+// functions on [OsoClient].
+type OsoClientImpl struct {
 	url                string
 	apiKey             string
 	httpClient         *http.Client
@@ -208,7 +320,7 @@ type client struct {
 	fallbackUrl        string
 	fallbackHttpClient *http.Client
 	dataBindings       string
-	clientId 					 string
+	clientId           string
 }
 
 // Create a new Oso client with a fallbackURL and custom logger
@@ -250,7 +362,7 @@ func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string,
 
 	clientId := uuid.New().String()
 
-	return client{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient, dataBindings, clientId}
+	return OsoClientImpl{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient, dataBindings, clientId}
 }
 
 // Create a new default Oso client
@@ -287,354 +399,241 @@ func NewClientWithLoggerAndDataBindings(url string, apiKey string, logger interf
 	return NewClientWithFallbackUrlAndLoggerAndDataBindings(url, apiKey, "", logger, dataBindings)
 }
 
-func (c client) AuthorizeLocal(actor Instance, action string, resource Instance) (string, error) {
-	actorT, err := toValue(actor)
+// Check a permission depending on data both in Oso Cloud and stored in a local database:
+// Returns a SQL query to run against the local database.
+func (c OsoClientImpl) AuthorizeLocal(actor Value, action string, resource Value) (string, error) {
+	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return "", err
 	}
-	resourceT, err := toValue(resource)
+	resourceT, err := toConcreteValue(resource)
 	if err != nil {
 		return "", err
 	}
 	payload := authorizeQuery{
-		ActorType:    *actorT.Type,
-		ActorId:      *actorT.Id,
+		ActorType:    actorT.Type,
+		ActorId:      actorT.Id,
 		Action:       action,
-		ResourceType: *resourceT.Type,
-		ResourceId:   *resourceT.Id,
+		ResourceType: resourceT.Type,
+		ResourceId:   resourceT.Id,
 		ContextFacts: []fact{},
 	}
 
-	resp, err := c.PostAuthorizeQuery(payload)
+	resp, err := c.postAuthorizeQuery(payload)
 	if err != nil {
 		return "", err
 	}
 	return resp.Sql, nil
 }
 
-func (c client) ListLocal(actor Instance, action string, resourceType string, column string) (string, error) {
-	actorT, err := toValue(actor)
+// List authorized resources depending on data both in Oso Cloud and stored in a local database:
+// Returns a SQL query to run against the local database.
+func (c OsoClientImpl) ListLocal(actor Value, action string, resourceType string, column string) (string, error) {
+	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return "", err
 	}
 	payload := listQuery{
-		ActorType:    *actorT.Type,
-		ActorId:      *actorT.Id,
+		ActorType:    actorT.Type,
+		ActorId:      actorT.Id,
 		Action:       action,
 		ResourceType: resourceType,
 		ContextFacts: []fact{},
 	}
 
-	resp, err := c.PostListQuery(payload, column)
+	resp, err := c.postListQuery(payload, column)
 	if err != nil {
 		return "", err
 	}
 	return resp.Sql, nil
 }
 
-func (c client) ActionsLocal(actor Instance, resource Instance) (string, error) {
-	actorT, err := toValue(actor)
+// Fetches a query that can be run against your database to determine the actions
+// an actor can perform on a resource.
+// Returns a SQL query to run against the local database.
+
+func (c OsoClientImpl) ActionsLocal(actor Value, resource Value) (string, error) {
+	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return "", err
 	}
-	resourceT, err := toValue(resource)
+	resourceT, err := toConcreteValue(resource)
 	if err != nil {
 		return "", err
 	}
 	payload := actionsQuery{
-		ActorType:    *actorT.Type,
-		ActorId:      *actorT.Id,
-		ResourceType: *resourceT.Type,
-		ResourceId:   *resourceT.Id,
+		ActorType:    actorT.Type,
+		ActorId:      actorT.Id,
+		ResourceType: resourceT.Type,
+		ResourceId:   resourceT.Id,
 		ContextFacts: []fact{},
 	}
 
-	resp, err := c.PostActionsQuery(payload)
+	resp, err := c.postActionsQuery(payload)
 	if err != nil {
 		return "", err
 	}
 	return resp.Sql, nil
 }
 
-func (c client) AuthorizeWithContext(actor Instance, action string, resource Instance, context_facts []Fact) (bool, error) {
-	actorT, err := toValue(actor)
+// Determines whether or not an action is allowed, based on a combination of
+// authorization data (including the given context facts) and policy logic.
+func (c OsoClientImpl) AuthorizeWithContext(actor Value, action string, resource Value, contextFacts []Fact) (bool, error) {
+	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return false, err
 	}
-	resourceT, err := toValue(resource)
+	resourceT, err := toConcreteValue(resource)
 	if err != nil {
 		return false, err
 	}
 	payload := authorizeQuery{
-		ActorType:    *actorT.Type,
-		ActorId:      *actorT.Id,
+		ActorType:    actorT.Type,
+		ActorId:      actorT.Id,
 		Action:       action,
-		ResourceType: *resourceT.Type,
-		ResourceId:   *resourceT.Id,
-		ContextFacts: mapToInternalFacts(context_facts),
+		ResourceType: resourceT.Type,
+		ResourceId:   resourceT.Id,
+		ContextFacts: mapToInternalFacts(contextFacts),
 	}
 
-	resp, err := c.PostAuthorize(payload)
+	resp, err := c.postAuthorize(payload)
 	if err != nil {
 		return false, err
 	}
 	return resp.Allowed, nil
 }
 
-func (c client) Authorize(actor Instance, action string, resource Instance) (bool, error) {
+// Determines whether or not an action is allowed, based on a combination of
+// authorization data and policy logic.
+func (c OsoClientImpl) Authorize(actor Value, action string, resource Value) (bool, error) {
 	return c.AuthorizeWithContext(actor, action, resource, nil)
 }
 
-func (c client) AuthorizeResourcesWithContext(actor Instance, action string, resources []Instance, context_facts []Fact) ([]Instance, error) {
-	key := func(e value) string {
-		return fmt.Sprintf("%s:%s", *e.Type, *e.Id)
-	}
-
-	if len(resources) == 0 {
-		return []Instance{}, nil
-	}
-
-	resourcesExtracted := make([]value, len(resources))
-	for i := range resources {
-		extracted, err := toValue(resources[i])
-		if err != nil {
-			return nil, err
-		}
-		resourcesExtracted[i] = *extracted
-	}
-
-	actorI, err := toValue(actor)
-	if err != nil {
-		return nil, err
-	}
-	payload := authorizeResourcesQuery{
-		ActorType:    *actorI.Type,
-		ActorId:      *actorI.Id,
-		Action:       action,
-		Resources:    resourcesExtracted,
-		ContextFacts: mapToInternalFacts(context_facts),
-	}
-
-	resp, err := c.PostAuthorizeResources(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(resp.Results) == 0 {
-		return []Instance{}, nil
-	}
-
-	resultsLookup := make(map[string]bool, len(resp.Results))
-	for i := range resp.Results {
-		k := key(resp.Results[i])
-		_, ok := resultsLookup[k]
-		if !ok {
-			resultsLookup[k] = true
-		}
-	}
-
-	results := make([]Instance, len(resources))
-	var n_results = 0
-	for i := range resources {
-		extracted, err := toValue(resources[i])
-		if err != nil {
-			return nil, err
-		}
-		k := key(*extracted)
-		_, ok := resultsLookup[k]
-		if ok {
-			results[n_results] = resources[i]
-			n_results++
-		}
-	}
-
-	return results[0:n_results], nil
-}
-
-func (c client) AuthorizeResources(actor Instance, action string, resources []Instance) ([]Instance, error) {
-	return c.AuthorizeResourcesWithContext(actor, action, resources, nil)
-}
-
-func (c client) ListWithContext(actor Instance, action string, resourceType string, context_facts []Fact) ([]string, error) {
-	actorT, err := toValue(actor)
+// Fetches a list of resource ids on which an actor can perform a particular action, considering the given context facts.
+func (c OsoClientImpl) ListWithContext(actor Value, action string, resourceType string, contextFacts []Fact) ([]string, error) {
+	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return nil, err
 	}
 	payload := listQuery{
-		ActorType:    *actorT.Type,
-		ActorId:      *actorT.Id,
+		ActorType:    actorT.Type,
+		ActorId:      actorT.Id,
 		Action:       action,
 		ResourceType: resourceType,
-		ContextFacts: mapToInternalFacts(context_facts),
+		ContextFacts: mapToInternalFacts(contextFacts),
 	}
 
-	resp, err := c.PostList(payload)
+	resp, err := c.postList(payload)
 	if err != nil {
 		return nil, err
 	}
 	return resp.Results, nil
 }
 
-func (c client) List(actor Instance, action string, resourceType string, context_facts []Fact) ([]string, error) {
+// Fetches a list of resource ids on which an actor can perform a particular action.
+func (c OsoClientImpl) List(actor Value, action string, resourceType string, contextFacts []Fact) ([]string, error) {
 	return c.ListWithContext(actor, action, resourceType, nil)
 }
 
-func (c client) ActionsWithContext(actor Instance, resource Instance, context_facts []Fact) ([]string, error) {
-	actorT, err := toValue(actor)
+// Fetches a list of actions which an actor can perform on a particular
+// resource, considering the given context facts.
+func (c OsoClientImpl) ActionsWithContext(actor Value, resource Value, contextFacts []Fact) ([]string, error) {
+	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return nil, err
 	}
-	resourceT, err := toValue(resource)
+	resourceT, err := toConcreteValue(resource)
 	if err != nil {
 		return nil, err
 	}
 	payload := actionsQuery{
-		ActorType:    *actorT.Type,
-		ActorId:      *actorT.Id,
-		ResourceType: *resourceT.Type,
-		ResourceId:   *resourceT.Id,
-		ContextFacts: mapToInternalFacts(context_facts),
+		ActorType:    actorT.Type,
+		ActorId:      actorT.Id,
+		ResourceType: resourceT.Type,
+		ResourceId:   resourceT.Id,
+		ContextFacts: mapToInternalFacts(contextFacts),
 	}
 
-	resp, err := c.PostActions(payload)
+	resp, err := c.postActions(payload)
 	if err != nil {
 		return nil, err
 	}
 	return resp.Results, nil
 }
 
-func (c client) BulkActions(actor Instance, resources []Instance, context_facts []Fact) ([][]string, error) {
-	actorT, err := toValue(actor)
-	if err != nil {
-		return nil, err
-	}
-	resourcesT := []value{}
-	var resourceType *string
-	for _, resource := range resources {
-		resourceT, err := toValue(resource)
-		if err != nil {
-			return nil, err
-		}
-		if resourceType == nil {
-			resourceType = resourceT.Type
-		} else if *resourceType != *resourceT.Type {
-			return nil, fmt.Errorf("BulkActions: resources must be of the same type")
-		}
-		resourcesT = append(resourcesT, *resourceT)
-	}
-
-	queries := []actionsQuery{}
-	for i, resource := range resourcesT {
-		ContextFacts := []fact{}
-		// Only map context facts once
-		// since we reuse them across the
-		// whole query
-		if i == 0 {
-			ContextFacts = mapToInternalFacts(context_facts)
-		}
-		queries = append(queries, actionsQuery{
-			ActorType:    *actorT.Type,
-			ActorId:      *actorT.Id,
-			ResourceType: *resourceType,
-			ResourceId:   *resource.Id,
-			ContextFacts: ContextFacts,
-		})
-	}
-
-	resp, err := c.PostBulkActions(queries)
-	if err != nil {
-		return nil, err
-	}
-	results := [][]string{}
-	for _, r := range resp {
-		results = append(results, r.Results)
-	}
-	return results, nil
-}
-
-func (c client) Actions(actor Instance, resource Instance) ([]string, error) {
+// Fetches a list of actions which an actor can perform on a particular resource.
+func (c OsoClientImpl) Actions(actor Value, resource Value) ([]string, error) {
 	return c.ActionsWithContext(actor, resource, nil)
 }
 
-func (c client) Tell(name string, args ...Instance) error {
-	jsonArgs := []value{}
-	for _, arg := range args {
-		argT, err := toValue(arg)
-		if err != nil {
-			return err
-		}
-		jsonArgs = append(jsonArgs, *argT)
+// Adds the given fact to Oso Cloud.
+func (c OsoClientImpl) Insert(fact Fact) error {
+
+	internalFact, err := toInternalFact(fact)
+	if err != nil {
+		return err
 	}
-	payload := fact{
-		Predicate: name,
-		Args:      jsonArgs,
-	}
-	_, err := c.PostFacts(payload)
+	_, err = c.postFacts(*internalFact)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c client) BulkTell(facts []Fact) error {
-	_, e := c.PostBulkLoad(mapToInternalFacts(facts))
-	if e != nil {
-		return e
+// Delete the [Fact] or all facts matching the given [FactPattern].
+//
+// Does not throw an error if no facts match the given pattern.
+//
+// The arguments to pattern can be a [Value] (matching arguments of that
+// exact value at the given position), a [ValueOfType] (matching facts with an
+// argument of the given type at the given position), or nil (matching facts
+// with any value at the given position).
+//
+// Example:
+//
+//	oso.Delete(NewFactPattern("has_role", NewValue("User", "alice"), nil, NewValueOfType("Repo")))
+//
+// will delete all "has_role" facts where the first argument is the User
+// "alice", the second argument is anything, and the third argument is a
+// Repo.
+func (c OsoClientImpl) Delete(pattern IntoFactPattern) error {
+	payload, err := pattern.intoFactPattern()
+	if err != nil {
+		return err
 	}
-	return nil
-}
-
-func (c client) Delete(name string, args ...Instance) error {
-	jsonArgs := []value{}
-	for _, arg := range args {
-		argT, err := toValue(arg)
-		if err != nil {
-			return err
-		}
-		jsonArgs = append(jsonArgs, *argT)
-	}
-	payload := fact{
-		Predicate: name,
-		Args:      jsonArgs,
-	}
-	_, err := c.DeleteFacts(payload)
+	_, err = c.deleteFacts(*payload)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c client) BulkDelete(facts []Fact) error {
-	_, e := c.PostBulkDelete(mapToInternalFacts(facts))
-	if e != nil {
-		return e
+// Batch together many inserts and deletes into a single HTTP call.
+// Example:
+//
+//	oso.Batch(func(tx BatchTransaction) {
+//	  tx.Insert(NewFact("has_role", NewValue("User", "alice"), String("owner"), NewValue("Repo", "acme"))
+//	  tx.Insert(NewFact("has_role", NewValue("User", "alice"), String("member"), NewValue("Repo", "anvil"))
+//	  tx.Delete(NewFactPattern("has_role", NewValue("User", "bob"), nil, nil))
+//	})
+func (c OsoClientImpl) Batch(fn func(BatchTransaction)) error {
+	tx := batchTransaction{changesets: []factChangeset{}}
+	fn(&tx)
+	_, err := c.postBatch(tx.changesets)
+	if err != nil {
+		return err
 	}
 	return nil
 }
 
-func (c client) Bulk(delete []Fact, tell []Fact) error {
-	_, e := c.PostBulk(bulk{Delete: mapToInternalFacts(delete), Tell: mapToInternalFacts(tell)})
-	return e
-}
-
-func (c client) Get(predicate string, args ...Instance) ([]Fact, error) {
-	var jsonPredicate *string
-	if predicate == "" {
-		jsonPredicate = nil
-	} else {
-		jsonPredicate = &predicate
+// Lists facts that are stored in Oso Cloud that match the given [FactPattern].
+func (c OsoClientImpl) Get(pattern IntoFactPattern) ([]Fact, error) {
+	payload, err := pattern.intoFactPattern()
+	if err != nil {
+		return nil, err
 	}
 
-	jsonArgs := []value{}
-	for _, arg := range args {
-		argT, err := toValue(arg)
-		if err != nil {
-			return nil, err
-		}
-		jsonArgs = append(jsonArgs, *argT)
-	}
-
-	resp, e := c.GetFacts(jsonPredicate, jsonArgs)
+	resp, e := c.getFacts(*payload)
 	if e != nil {
 		return nil, e
 	}
@@ -644,51 +643,32 @@ func (c client) Get(predicate string, args ...Instance) ([]Fact, error) {
 	return mapFromInternalFacts(resp), nil
 }
 
-func (c client) GetPolicyMetadata() (*PolicyMetadata, error) {
-	metadata, err := c.GetPolicyMetadataResult(nil)
+// Returns metadata about the currently active policy.
+func (c OsoClientImpl) GetPolicyMetadata() (*PolicyMetadata, error) {
+	metadata, err := c.getPolicyMetadataResult(nil)
 	if err != nil {
 		return nil, err
 	}
 	return &metadata.Metadata, nil
 }
 
-func (c client) Policy(p string) error {
+// Updates the active policy in Oso Cloud.
+// The string passed into this function should be written in Polar.
+func (c OsoClientImpl) Policy(p string) error {
 	payload := policy{
 		Filename: nil,
 		Src:      p,
 	}
-	_, e := c.PostPolicy(payload)
+	_, e := c.postPolicy(payload)
 	if e != nil {
 		return e
 	}
 	return nil
 }
 
-func (c client) Query(predicate string, args ...*Instance) ([]Fact, error) {
-	vargs := []value{}
-	for _, arg := range args {
-		var argV *value
-		if arg == nil {
-			argV = &value{Type: nil, Id: nil}
-		} else {
-			var err error
-			argV, err = toValue(*arg)
-			if err != nil {
-				return nil, err
-			}
-		}
-		vargs = append(vargs, *argV)
-	}
-	query := query{
-		Fact: fact{
-			Predicate: predicate,
-			Args:      vargs,
-		},
-		ContextFacts: make([]fact, 0),
-	}
-	resp, e := c.PostQuery(query)
-	if e != nil {
-		return nil, e
-	}
-	return mapFromInternalFacts(resp.Results), nil
+// Query for an arbitrary expression:
+// Use [TypedVar] to create variables to use in the query,
+// and refer to them in the final [QueryBuilder.Evaluate] call to get their values.
+func (c OsoClientImpl) BuildQuery(query QueryFact) QueryBuilder {
+	return newBuilder(c, query)
 }

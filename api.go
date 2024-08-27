@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
+
+	"github.com/google/uuid"
 )
 
 type apiResult struct {
@@ -30,18 +30,43 @@ type getPolicyResult struct {
 }
 
 type fact struct {
-	Predicate string  `json:"predicate"`
-	Args      []value `json:"args"`
+	Predicate string          `json:"predicate"`
+	Args      []concreteValue `json:"args"`
 }
 
-type value struct {
+type factPattern struct {
+	Predicate string          `json:"predicate"`
+	Args      []variableValue `json:"args"`
+}
+
+type concreteValue struct {
+	Type string `json:"type"`
+	Id   string `json:"id"`
+}
+
+type variableValue struct {
 	Type *string `json:"type"`
 	Id   *string `json:"id"`
 }
 
-type bulk struct {
-	Delete []fact `json:"delete"`
-	Tell   []fact `json:"tell"`
+type factChangeset interface {
+	isInsert() bool
+}
+
+type batchInserts struct {
+	Inserts []fact `json:"inserts"`
+}
+
+func (b batchInserts) isInsert() bool {
+	return true
+}
+
+type batchDeletes struct {
+	Deletes []factPattern `json:"deletes"`
+}
+
+func (b batchDeletes) isInsert() bool {
+	return false
 }
 
 type authorizeResult struct {
@@ -55,18 +80,6 @@ type authorizeQuery struct {
 	ResourceType string `json:"resource_type"`
 	ResourceId   string `json:"resource_id"`
 	ContextFacts []fact `json:"context_facts"`
-}
-
-type authorizeResourcesResult struct {
-	Results []value `json:"results"`
-}
-
-type authorizeResourcesQuery struct {
-	ActorType    string  `json:"actor_type"`
-	ActorId      string  `json:"actor_id"`
-	Action       string  `json:"action"`
-	Resources    []value `json:"resources"`
-	ContextFacts []fact  `json:"context_facts"`
 }
 
 type listResult struct {
@@ -93,13 +106,15 @@ type actionsQuery struct {
 	ContextFacts []fact `json:"context_facts"`
 }
 
-type queryResult struct {
-	Results []fact `json:"results"`
+type query struct {
+	Predicate    apiQueryCall               `json:"predicate"`
+	Calls        []apiQueryCall             `json:"calls"`
+	Constraints  map[string]queryConstraint `json:"constraints"`
+	ContextFacts []fact                     `json:"context_facts"`
 }
 
-type query struct {
-	Fact         fact   `json:"fact"`
-	ContextFacts []fact `json:"context_facts"`
+type queryResult struct {
+	Results []map[string]string `json:"results"`
 }
 
 type statsResult struct {
@@ -112,10 +127,13 @@ type getPolicyMetadataResult struct {
 	Metadata PolicyMetadata `json:"metadata"`
 }
 
+// Maps each resource type declared in the policy to the permissions, roles, and relations
+// that are valid for that resource.
 type PolicyMetadata struct {
 	Resources map[string]ResourceMetadata `json:"resources"`
 }
 
+// The permissions, roles, and relations that are valid for a particular resource type.
 type ResourceMetadata struct {
 	Permissions []string          `json:"permissions"`
 	Roles       []string          `json:"roles"`
@@ -142,7 +160,7 @@ type localQueryResult struct {
 	Sql string `json:"sql"`
 }
 
-func (c *client) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
+func (c *OsoClientImpl) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
 	url := c.url + "/api" + path
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
@@ -164,7 +182,7 @@ func (c *client) apiCall(method string, path string, body io.Reader) (*http.Requ
 	return req, nil
 }
 
-func (c *client) doRequest(req *http.Request, output interface{}, isMutation bool) error {
+func (c *OsoClientImpl) doRequest(req *http.Request, output interface{}, isMutation bool) error {
 	fallbackEligible := func(url *url.URL) bool {
 		contains := func(haystack []string, needle string) bool {
 			for _, v := range haystack {
@@ -200,7 +218,7 @@ func (c *client) doRequest(req *http.Request, output interface{}, isMutation boo
 		}
 	}
 	defer res.Body.Close()
-	resBodyJSON, e := ioutil.ReadAll(res.Body)
+	resBodyJSON, e := io.ReadAll(res.Body)
 	if e != nil {
 		return e
 	}
@@ -223,7 +241,7 @@ func (c *client) doRequest(req *http.Request, output interface{}, isMutation boo
 	return nil
 }
 
-func (c *client) get(path string, query map[string]string, output interface{}) error {
+func (c *OsoClientImpl) get(path string, query map[string]string, output interface{}) error {
 	req, e := c.apiCall("GET", path, nil)
 	if e != nil {
 		return e
@@ -237,7 +255,7 @@ func (c *client) get(path string, query map[string]string, output interface{}) e
 	return c.doRequest(req, output, false)
 }
 
-func (c *client) post(path string, data interface{}, output interface{}, isMutation bool) error {
+func (c *OsoClientImpl) post(path string, data interface{}, output interface{}, isMutation bool) error {
 	var reqBodyBytes io.Reader
 	reqBodyJSON, e := json.Marshal(data)
 	if e != nil {
@@ -254,7 +272,7 @@ func (c *client) post(path string, data interface{}, output interface{}, isMutat
 	return c.doRequest(req, output, isMutation)
 }
 
-func (c *client) delete(path string, data interface{}, output interface{}) error {
+func (c *OsoClientImpl) delete(path string, data interface{}, output interface{}) error {
 	var reqBodyBytes io.Reader
 	reqBodyJSON, e := json.Marshal(data)
 	if e != nil {
@@ -271,7 +289,7 @@ func (c *client) delete(path string, data interface{}, output interface{}) error
 	return c.doRequest(req, output, true)
 }
 
-func (c *client) GetPolicy() (*getPolicyResult, error) {
+func (c *OsoClientImpl) getPolicy() (*getPolicyResult, error) {
 	var result getPolicyResult
 	if e := c.get("/policy", nil, &result); e != nil {
 		return nil, e
@@ -279,7 +297,7 @@ func (c *client) GetPolicy() (*getPolicyResult, error) {
 	return &result, nil
 }
 
-func (c *client) GetPolicyMetadataResult(version *string) (*getPolicyMetadataResult, error) {
+func (c *OsoClientImpl) getPolicyMetadataResult(version *string) (*getPolicyMetadataResult, error) {
 	var result getPolicyMetadataResult
 	params := make(map[string]string)
 	if version != nil {
@@ -291,7 +309,7 @@ func (c *client) GetPolicyMetadataResult(version *string) (*getPolicyMetadataRes
 	return &result, nil
 }
 
-func (c *client) PostPolicy(data policy) (*apiResult, error) {
+func (c *OsoClientImpl) postPolicy(data policy) (*apiResult, error) {
 	var resBody apiResult
 	if e := c.post("/policy", data, &resBody, true); e != nil {
 		return nil, e
@@ -299,35 +317,30 @@ func (c *client) PostPolicy(data policy) (*apiResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) PostFacts(data fact) (*fact, error) {
-	url := "/facts"
-	var resBody fact
-	if e := c.post(url, data, &resBody, true); e != nil {
-		return nil, e
-	}
-	return &resBody, nil
-}
+func (c *OsoClientImpl) postFacts(data fact) (*apiResult, error) {
+	url := "/batch"
+	changesets := []factChangeset{batchInserts{Inserts: []fact{data}}}
 
-func (c *client) DeleteFacts(data fact) (*apiResult, error) {
-	url := "/facts"
 	var resBody apiResult
-	if e := c.delete(url, data, &resBody); e != nil {
+	if e := c.post(url, changesets, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c *client) PostBulkLoad(data []fact) (*apiResult, error) {
-	url := "/bulk_load"
+func (c *OsoClientImpl) deleteFacts(data factPattern) (*apiResult, error) {
+	url := "/batch"
+
+	changesets := []factChangeset{batchDeletes{Deletes: []factPattern{data}}}
 	var resBody apiResult
-	if e := c.post(url, data, &resBody, true); e != nil {
+	if e := c.post(url, changesets, &resBody, true); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
 }
 
-func (c *client) PostBulkDelete(data []fact) (*apiResult, error) {
-	url := "/bulk_delete"
+func (c *OsoClientImpl) postBatch(data []factChangeset) (*apiResult, error) {
+	url := "/batch"
 	var resBody apiResult
 	if e := c.post(url, data, &resBody, true); e != nil {
 		return nil, e
@@ -335,16 +348,7 @@ func (c *client) PostBulkDelete(data []fact) (*apiResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) PostBulk(data bulk) (*apiResult, error) {
-	url := "/bulk"
-	var resBody apiResult
-	if e := c.post(url, data, &resBody, true); e != nil {
-		return nil, e
-	}
-	return &resBody, nil
-}
-
-func (c *client) PostAuthorize(data authorizeQuery) (*authorizeResult, error) {
+func (c *OsoClientImpl) postAuthorize(data authorizeQuery) (*authorizeResult, error) {
 	url := "/authorize"
 	var resBody authorizeResult
 	if e := c.post(url, data, &resBody, false); e != nil {
@@ -353,16 +357,7 @@ func (c *client) PostAuthorize(data authorizeQuery) (*authorizeResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) PostAuthorizeResources(data authorizeResourcesQuery) (*authorizeResourcesResult, error) {
-	url := "/authorize_resources"
-	var resBody authorizeResourcesResult
-	if e := c.post(url, data, &resBody, false); e != nil {
-		return nil, e
-	}
-	return &resBody, nil
-}
-
-func (c *client) PostList(data listQuery) (*listResult, error) {
+func (c *OsoClientImpl) postList(data listQuery) (*listResult, error) {
 	url := "/list"
 	var resBody listResult
 	if e := c.post(url, data, &resBody, false); e != nil {
@@ -371,7 +366,7 @@ func (c *client) PostList(data listQuery) (*listResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) PostActions(data actionsQuery) (*actionsResult, error) {
+func (c *OsoClientImpl) postActions(data actionsQuery) (*actionsResult, error) {
 	url := "/actions"
 	var resBody actionsResult
 	if e := c.post(url, data, &resBody, false); e != nil {
@@ -380,17 +375,8 @@ func (c *client) PostActions(data actionsQuery) (*actionsResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) PostBulkActions(data []actionsQuery) ([]actionsResult, error) {
-	url := "/bulk_actions"
-	var resBody []actionsResult
-	if e := c.post(url, data, &resBody, false); e != nil {
-		return nil, e
-	}
-	return resBody, nil
-}
-
-func (c *client) PostQuery(data query) (*queryResult, error) {
-	url := "/query"
+func (c *OsoClientImpl) postQuery(data query) (*queryResult, error) {
+	url := "/evaluate_query"
 	var resBody queryResult
 	if e := c.post(url, data, &resBody, false); e != nil {
 		return nil, e
@@ -398,7 +384,7 @@ func (c *client) PostQuery(data query) (*queryResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) GetStats() (*statsResult, error) {
+func (c *OsoClientImpl) getStats() (*statsResult, error) {
 	url := "/stats"
 	var resBody statsResult
 	if e := c.get(url, nil, &resBody); e != nil {
@@ -407,7 +393,7 @@ func (c *client) GetStats() (*statsResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) ClearData() (*apiResult, error) {
+func (c *OsoClientImpl) clearData() (*apiResult, error) {
 	url := "/clear_data"
 	var resBody apiResult
 	if e := c.post(url, nil, &resBody, true); e != nil {
@@ -416,13 +402,11 @@ func (c *client) ClearData() (*apiResult, error) {
 	return &resBody, nil
 }
 
-func (c *client) GetFacts(predicate *string, args []value) ([]fact, error) {
+func (c *OsoClientImpl) getFacts(data factPattern) ([]fact, error) {
 	url := "/facts"
 	params := make(map[string]string)
-	if predicate != nil {
-		params["predicate"] = *predicate
-	}
-	for i, arg := range args {
+	// TODO document that we don't support nil predicates anymore (why did we ever??)
+	for i, arg := range data.Args {
 		if arg.Type != nil {
 			params[fmt.Sprintf("args.%d.type", i)] = *arg.Type
 		}
@@ -437,7 +421,7 @@ func (c *client) GetFacts(predicate *string, args []value) ([]fact, error) {
 	return resBody, nil
 }
 
-func (c *client) PostAuthorizeQuery(query authorizeQuery) (*localQueryResult, error) {
+func (c *OsoClientImpl) postAuthorizeQuery(query authorizeQuery) (*localQueryResult, error) {
 	url := "/authorize_query"
 	data := localAuthQuery{
 		Query:        query,
@@ -450,7 +434,7 @@ func (c *client) PostAuthorizeQuery(query authorizeQuery) (*localQueryResult, er
 	return &resBody, nil
 }
 
-func (c *client) PostListQuery(query listQuery, column string) (*localQueryResult, error) {
+func (c *OsoClientImpl) postListQuery(query listQuery, column string) (*localQueryResult, error) {
 	url := "/list_query"
 	data := localListQuery{
 		Query:        query,
@@ -464,7 +448,7 @@ func (c *client) PostListQuery(query listQuery, column string) (*localQueryResul
 	return &resBody, nil
 }
 
-func (c *client) PostActionsQuery(query actionsQuery) (*localQueryResult, error) {
+func (c *OsoClientImpl) postActionsQuery(query actionsQuery) (*localQueryResult, error) {
 	url := "/actions_query"
 	data := localActionsQuery{
 		Query:        query,

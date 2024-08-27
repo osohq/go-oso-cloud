@@ -1,10 +1,10 @@
-module github.com/osohq/go-oso-cloud
+module github.com/osohq/go-oso-cloud/v2
 
 go 1.14
 
 require (
-	github.com/hashicorp/go-retryablehttp v0.7.1
+	github.com/google/uuid v1.6.0
+	github.com/hashicorp/go-retryablehttp v0.7.7
 	gorm.io/driver/postgres v1.5.7
 	gorm.io/gorm v1.25.9
-	github.com/google/uuid v1.6.0
 )
