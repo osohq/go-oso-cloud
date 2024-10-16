@@ -19,7 +19,7 @@ func (Environment) TableName() string {
 	return "environment"
 }
 
-func TestLocalDataFiltering(t *testing.T) {
+func TestListFiltering(t *testing.T) {
 	oso := NewClientWithDataBindings("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn", "../../feature/src/tests/data_bindings/oso_control.yaml")
 
 	postgres := postgres.Open("host=localhost user=oso password=oso dbname=oso_control")
@@ -101,6 +101,21 @@ func TestLocalDataFiltering(t *testing.T) {
 		}
 	})
 
+	t.Run("list filtering with context facts", func(t *testing.T) {
+		charles := NewValue("User", "charles")
+		filter, err := oso.ListLocalWithContext(charles, "read", "Environment", "id", []Fact{
+			NewFact("is_god", charles),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var environments []Environment
+		db.Find(&environments, filter)
+		if len(environments) != 5 { // all of em
+			t.Fatalf("expected 5 environments, got %d", len(environments))
+		}
+	})
+
 	t.Run("basic authorize, allowed", func(t *testing.T) {
 		query, err := oso.AuthorizeLocal(alice, "create_fact", environment1)
 		if err != nil {
@@ -149,8 +164,38 @@ func TestLocalDataFiltering(t *testing.T) {
 		}
 	})
 
+	t.Run("authorize with context facts", func(t *testing.T) {
+		charles := NewValue("User", "charles")
+		query, err := oso.AuthorizeLocalWithContext(charles, "read", environment1, []Fact{
+			NewFact("is_god", charles),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var authorizeResult AuthorizeResult
+		db.Raw(query).Scan(&authorizeResult)
+		if !authorizeResult.Allowed {
+			t.Fatalf("expected allowed, got %t", authorizeResult.Allowed)
+		}
+	})
+
 	t.Run("actions", func(t *testing.T) {
 		query, err := oso.ActionsLocal(bob, environmentAny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var actions []string
+		db.Raw(query).Pluck("actions", &actions)
+		if !reflect.DeepEqual(actions, []string{"read"}) {
+			t.Fatalf("expected [read], got %v", actions)
+		}
+	})
+
+	t.Run("actions with context facts", func(t *testing.T) {
+		charles := NewValue("User", "charles")
+		query, err := oso.ActionsLocalWithContext(charles, environment1, []Fact{
+			NewFact("is_god", charles),
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

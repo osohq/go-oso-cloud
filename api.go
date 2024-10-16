@@ -160,6 +160,8 @@ type localQueryResult struct {
 	Sql string `json:"sql"`
 }
 
+const maxBodySize = 10 * 1024 * 1024
+
 func (c *OsoClientImpl) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
 	url := c.url + "/api" + path
 	req, err := http.NewRequest(method, url, body)
@@ -261,6 +263,9 @@ func (c *OsoClientImpl) post(path string, data interface{}, output interface{}, 
 	if e != nil {
 		return e
 	}
+	if len(reqBodyJSON) > maxBodySize {
+		return fmt.Errorf("Request payload too large (bodySizeBytes: %d, maxBodySize: %d)", len(reqBodyJSON), maxBodySize)
+	}
 	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
 	req, e := c.apiCall("POST", path, reqBodyBytes)
 	if e != nil {
@@ -277,6 +282,9 @@ func (c *OsoClientImpl) delete(path string, data interface{}, output interface{}
 	reqBodyJSON, e := json.Marshal(data)
 	if e != nil {
 		return e
+	}
+	if len(reqBodyJSON) > maxBodySize {
+		return fmt.Errorf("Request payload too large (bodySizeBytes: %d, maxBodySize: %d)", len(reqBodyJSON), maxBodySize)
 	}
 	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
 	req, e := c.apiCall("DELETE", path, reqBodyBytes)

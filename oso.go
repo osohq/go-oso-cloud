@@ -305,8 +305,11 @@ type OsoClient interface {
 	ListWithContext(actor Value, action string, resource string, contextFacts []Fact) ([]string, error)
 	BuildQuery(query QueryFact) QueryBuilder
 	AuthorizeLocal(actor Value, action string, resource Value) (string, error)
+	AuthorizeLocalWithContext(actor Value, action string, resource Value, contextFacts []Fact) (string, error)
 	ListLocal(actor Value, action string, resource string, column string) (string, error)
+	ListLocalWithContext(actor Value, action string, resource string, column string, contextFacts []Fact) (string, error)
 	ActionsLocal(actor Value, resource Value) (string, error)
+	ActionsLocalWithContext(actor Value, resource Value, contextFacts []Fact) (string, error)
 }
 
 // The default implementation of [OsoClient]. Create an instance using the constructor
@@ -402,6 +405,12 @@ func NewClientWithLoggerAndDataBindings(url string, apiKey string, logger interf
 // Check a permission depending on data both in Oso Cloud and stored in a local database:
 // Returns a SQL query to run against the local database.
 func (c OsoClientImpl) AuthorizeLocal(actor Value, action string, resource Value) (string, error) {
+	return c.AuthorizeLocalWithContext(actor, action, resource, []Fact{})
+}
+
+// Check a permission depending on data both in Oso Cloud and stored in a local database:
+// Returns a SQL query to run against the local database.
+func (c OsoClientImpl) AuthorizeLocalWithContext(actor Value, action string, resource Value, contextFacts []Fact) (string, error) {
 	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return "", err
@@ -416,7 +425,7 @@ func (c OsoClientImpl) AuthorizeLocal(actor Value, action string, resource Value
 		Action:       action,
 		ResourceType: resourceT.Type,
 		ResourceId:   resourceT.Id,
-		ContextFacts: []fact{},
+		ContextFacts: mapToInternalFacts(contextFacts),
 	}
 
 	resp, err := c.postAuthorizeQuery(payload)
@@ -429,16 +438,23 @@ func (c OsoClientImpl) AuthorizeLocal(actor Value, action string, resource Value
 // List authorized resources depending on data both in Oso Cloud and stored in a local database:
 // Returns a SQL query to run against the local database.
 func (c OsoClientImpl) ListLocal(actor Value, action string, resourceType string, column string) (string, error) {
+	return c.ListLocalWithContext(actor, action, resourceType, column, []Fact{})
+}
+
+// List authorized resources depending on data both in Oso Cloud and stored in a local database:
+// Returns a SQL query to run against the local database.
+func (c OsoClientImpl) ListLocalWithContext(actor Value, action string, resourceType string, column string, contextFacts []Fact) (string, error) {
 	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return "", err
 	}
+
 	payload := listQuery{
 		ActorType:    actorT.Type,
 		ActorId:      actorT.Id,
 		Action:       action,
 		ResourceType: resourceType,
-		ContextFacts: []fact{},
+		ContextFacts: mapToInternalFacts(contextFacts),
 	}
 
 	resp, err := c.postListQuery(payload, column)
@@ -451,8 +467,14 @@ func (c OsoClientImpl) ListLocal(actor Value, action string, resourceType string
 // Fetches a query that can be run against your database to determine the actions
 // an actor can perform on a resource.
 // Returns a SQL query to run against the local database.
-
 func (c OsoClientImpl) ActionsLocal(actor Value, resource Value) (string, error) {
+	return c.ActionsLocalWithContext(actor, resource, []Fact{})
+}
+
+// Fetches a query that can be run against your database to determine the actions
+// an actor can perform on a resource.
+// Returns a SQL query to run against the local database.
+func (c OsoClientImpl) ActionsLocalWithContext(actor Value, resource Value, contextFacts []Fact) (string, error) {
 	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return "", err
@@ -466,7 +488,7 @@ func (c OsoClientImpl) ActionsLocal(actor Value, resource Value) (string, error)
 		ActorId:      actorT.Id,
 		ResourceType: resourceT.Type,
 		ResourceId:   resourceT.Id,
-		ContextFacts: []fact{},
+		ContextFacts: mapToInternalFacts(contextFacts),
 	}
 
 	resp, err := c.postActionsQuery(payload)

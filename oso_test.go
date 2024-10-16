@@ -133,6 +133,15 @@ func TestAPIError(t *testing.T) {
 	}
 }
 
+func TestRequestBodyTooBig(t *testing.T) {
+	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	user := Value{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
+	e := o.Insert(NewFact("has_role", user, String(strings.Repeat("a", 10 * 1024 * 1024))))
+	if e == nil || !strings.HasPrefix(e.Error(), "Request payload too large") {
+		t.Fatalf("Invalid API request had unexpected result: %v", e)
+	}
+}
+
 func TestBatch(t *testing.T) {
 	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
 	o.Policy(`
