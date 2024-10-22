@@ -91,9 +91,10 @@ func TestEverything(t *testing.T) {
 		if e != nil || len(roles) != 2 || roles[0].Predicate != "has_role" {
 			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
 		}
-		facts, e := o.Get(NewFactPattern("", nil, nil, nil))
-		if e != nil || len(facts) != 3 {
-			t.Fatalf("Get facts = %+v, %v, want %d elements", facts, e, 3)
+
+		facts, e := o.Get(NewFactPattern("has_role", nil, nil, nil))
+		if e != nil || len(facts) != 2 {
+			t.Fatalf("Get roles = %+v, %v, want %d elements", facts, e, 3)
 		}
 
 		allowedAgain, e := o.Authorize(user, "read", repoChild)
@@ -136,7 +137,7 @@ func TestAPIError(t *testing.T) {
 func TestRequestBodyTooBig(t *testing.T) {
 	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
 	user := Value{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
-	e := o.Insert(NewFact("has_role", user, String(strings.Repeat("a", 10 * 1024 * 1024))))
+	e := o.Insert(NewFact("has_role", user, String(strings.Repeat("a", 10*1024*1024))))
 	if e == nil || !strings.HasPrefix(e.Error(), "Request payload too large") {
 		t.Fatalf("Invalid API request had unexpected result: %v", e)
 	}
@@ -173,6 +174,7 @@ func TestBatch(t *testing.T) {
 
 	facts := []Fact{
 		NewFact("has_role", user, String("member"), repoChild),
+		NewFact("has_role", user, String("owner"), repoChild),
 		NewFact("has_relation", repoParent, String("parent"), repoChild),
 	}
 
@@ -196,13 +198,18 @@ func TestBatch(t *testing.T) {
 		}
 
 		e = o.Batch(func(tx BatchTransaction) {
-			tx.Delete(NewFactPattern("has_role", nil, nil, nil))
+			tx.Delete(NewFact("has_role", user, String("owner"), repoChild))
+			tx.Delete(NewFact("has_role", user, String("member"), repoChild))
 			tx.Delete(NewFactPattern("has_relation", nil, nil, nil))
 		})
 		if e != nil {
 			t.Fatalf("Batch delete failed: %v", e)
 		}
 		roles, e = o.Get(NewFactPattern("has_role", user, String("member"), repoChild))
+		if e != nil || len(roles) != 0 {
+			t.Fatalf("Get roles = %+v, %v, want %d elements", roles, e, 0)
+		}
+		roles, e = o.Get(NewFactPattern("has_role", user, String("owner"), repoChild))
 		if e != nil || len(roles) != 0 {
 			t.Fatalf("Get roles = %+v, %v, want %d elements", roles, e, 0)
 		}

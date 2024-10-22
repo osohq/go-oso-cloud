@@ -413,7 +413,7 @@ func (c *OsoClientImpl) clearData() (*apiResult, error) {
 func (c *OsoClientImpl) getFacts(data factPattern) ([]fact, error) {
 	url := "/facts"
 	params := make(map[string]string)
-	// TODO document that we don't support nil predicates anymore (why did we ever??)
+	params["predicate"] = data.Predicate
 	for i, arg := range data.Args {
 		if arg.Type != nil {
 			params[fmt.Sprintf("args.%d.type", i)] = *arg.Type

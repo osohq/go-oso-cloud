@@ -187,8 +187,12 @@ func mapFromInternalFacts(facts []fact) []Fact {
 func (fact Fact) intoFactPattern() (*factPattern, error) {
 	args := []variableValue{}
 	for _, arg := range fact.Args {
-		arg := &variableValue{Type: &arg.Type, Id: &arg.ID} // these shouldn't be nil / empty
-		args = append(args, *arg)
+		// Load-bearing variable assignments
+		argType := arg.Type
+		argID := arg.ID
+
+		patternArg := variableValue{Type: &argType, Id: &argID} // these shouldn't be nil / empty
+		args = append(args, patternArg)
 	}
 	return &factPattern{Predicate: fact.Predicate, Args: args}, nil
 }
