@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -160,11 +160,66 @@ type localQueryResult struct {
 	Sql string `json:"sql"`
 }
 
+// A struct to store information about a request
+//
+// We need this because we can't just build a request object and reuse it to
+// call the fallback service for two reasons:
+//
+//  1. After the request has been built, we can't distinguish between the part
+//     of the path that is from the base URL, and the part of the path that is
+//     from the specific API endpoint. For example, if we have
+//     `{host}/base/api/authorize`, we only want to append the `/api/authorize`
+//     part onto the fallback URL.
+//  2. After the request has been made, the body has been consumed, so we need
+//     to build a new io.Reader after we know we need to call fallback.
+//
+// Given that, we pass this object around and build the request as needed.
+type RequestData struct {
+	method string
+	path   string
+	data   interface{}
+	query  map[string]string
+}
+
+func (r RequestData) Body() (io.Reader, error) {
+	if r.data == nil {
+		return nil, nil
+	}
+	var reqBodyBytes io.Reader
+	reqBodyJSON, e := json.Marshal(r.data)
+	if e != nil {
+		return nil, e
+	}
+	if len(reqBodyJSON) > maxBodySize {
+		return nil, fmt.Errorf("request payload too large (body size bytes: %d, max body size: %d)", len(reqBodyJSON), maxBodySize)
+	}
+	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
+
+	return reqBodyBytes, nil
+}
+
+func (r RequestData) Method() string {
+	return r.method
+}
+
+func (r RequestData) Query() map[string]string {
+	return r.query
+}
+
+func (r RequestData) Path() string {
+	return r.path
+}
+
 const maxBodySize = 10 * 1024 * 1024
 
-func (c *OsoClientImpl) apiCall(method string, path string, body io.Reader) (*http.Request, error) {
-	url := c.url + "/api" + path
-	req, err := http.NewRequest(method, url, body)
+func (c *OsoClientImpl) buildRequest(baseUrl string, requestData RequestData) (*http.Request, error) {
+	url := baseUrl + "/api" + requestData.path
+	body, err := requestData.Body()
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(requestData.Method(), url, body)
 	if err != nil {
 		return nil, err
 	}
@@ -181,42 +236,93 @@ func (c *OsoClientImpl) apiCall(method string, path string, body io.Reader) (*ht
 		req.Header.Set("OsoOffset", c.lastOffset)
 	}
 
+	q := req.URL.Query()
+	queryArgs := requestData.Query()
+	for k, v := range queryArgs {
+		q.Add(k, v)
+	}
+	req.URL.RawQuery = q.Encode()
+
 	return req, nil
 }
 
-func (c *OsoClientImpl) doRequest(req *http.Request, output interface{}, isMutation bool) error {
-	fallbackEligible := func(url *url.URL) bool {
-		contains := func(haystack []string, needle string) bool {
-			for _, v := range haystack {
-				if v == needle {
-					return true
-				}
-			}
+func (c *OsoClientImpl) apiCall(requestData RequestData) (*http.Request, error) {
+	return c.buildRequest(c.url, requestData)
+}
 
-			return false
+func (c *OsoClientImpl) fallbackApiCall(requestData RequestData) (*http.Request, error) {
+	return c.buildRequest(c.fallbackUrl, requestData)
+}
+
+func (c *OsoClientImpl) fallbackEligible(path string, method string) bool {
+	type endpoint struct {
+		path   string
+		method string
+	}
+
+	contains := func(haystack []endpoint, needle endpoint) bool {
+		for _, v := range haystack {
+			if strings.HasSuffix(needle.path, v.path) && strings.EqualFold(needle.method, v.method) {
+				return true
+			}
 		}
 
-		eligiblePaths := []string{"/api/authorize", "/api/authorize_resources", "/api/list", "/api/actions", "/api/query"}
-		return c.fallbackHttpClient != nil && contains(eligiblePaths, url.EscapedPath())
+		return false
 	}
+
+	eligiblePaths := []endpoint{
+		{"/api/authorize", "post"},
+		{"/api/authorize_resources", "post"},
+		{"/api/list", "post"},
+		{"/api/actions", "post"},
+		{"/api/query", "post"},
+		{"/api/evaluate_query", "post"},
+		{"/api/authorize_query", "post"},
+		{"/api/list_query", "post"},
+		{"/api/actions_query", "post"},
+		{"/api/facts", "get"},
+		{"/api/policy_metadata", "get"},
+	}
+	return c.fallbackHttpClient != nil && contains(eligiblePaths,
+		endpoint{path, method},
+	)
+}
+
+// Actually send the request. Takes request data that can be used to build the
+// relevant request with different base urls. This is needed to handle falling
+// back to a host at a different base url.
+func (c *OsoClientImpl) doRequest(requestData RequestData, output interface{}, isMutation bool) error {
+	req, err := c.apiCall(requestData)
+	if err != nil {
+		return err
+	}
+
 	// make requests with retryclient
 	res, e := c.httpClient.Do(req)
-	if e != nil {
+	// NOTE: We have had cases where internal policy evaluation errors have
+	// resulted in 400s, so defensively allow 400s to retry on the fallback
+	// service.
+	if e != nil || res.StatusCode == 400 || res.StatusCode >= 500 {
 		// attempt to make a final request to fallbackURL if configured
-		if fallbackEligible(req.URL) {
-			// override the URL for the request to point to fallback
-			fb := c.fallbackUrl + req.URL.Path
-			fbUrl, err := url.Parse(fb)
-			if err != nil {
-				return err
+		if c.fallbackEligible(req.URL.EscapedPath(), req.Method) {
+			// Build a new request object for the fallback request
+			// NOTE: We can't reuse the original request object because the data in
+			// the body is already consumed at this point.
+			req, e := c.fallbackApiCall(requestData)
+			if e != nil {
+				return e
 			}
-			req.URL = fbUrl
 			res, e = c.fallbackHttpClient.Do(req)
 			if e != nil {
 				return e
 			}
 		} else {
-			return e
+			// If status code is >= 400 and we don't have fallback configured, we
+			// can get into this branch without an error set. In that case we want
+			// to continue and return the response object to the caller.
+			if e != nil {
+				return e
+			}
 		}
 	}
 	defer res.Body.Close()
@@ -244,57 +350,34 @@ func (c *OsoClientImpl) doRequest(req *http.Request, output interface{}, isMutat
 }
 
 func (c *OsoClientImpl) get(path string, query map[string]string, output interface{}) error {
-	req, e := c.apiCall("GET", path, nil)
-	if e != nil {
-		return e
+	requestData := RequestData{
+		method: "GET",
+		path:   path,
+		data:   nil,
+		query:  query,
 	}
-	q := req.URL.Query()
-	for k, v := range query {
-		q.Add(k, v)
-	}
-	req.URL.RawQuery = q.Encode()
 
-	return c.doRequest(req, output, false)
+	return c.doRequest(requestData, output, false)
 }
 
 func (c *OsoClientImpl) post(path string, data interface{}, output interface{}, isMutation bool) error {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return e
+	requestData := RequestData{
+		method: "POST",
+		path:   path,
+		data:   data,
+		query:  nil,
 	}
-	if len(reqBodyJSON) > maxBodySize {
-		return fmt.Errorf("Request payload too large (bodySizeBytes: %d, maxBodySize: %d)", len(reqBodyJSON), maxBodySize)
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
-	req, e := c.apiCall("POST", path, reqBodyBytes)
-	if e != nil {
-		return e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-
-	return c.doRequest(req, output, isMutation)
+	return c.doRequest(requestData, output, isMutation)
 }
 
 func (c *OsoClientImpl) delete(path string, data interface{}, output interface{}) error {
-	var reqBodyBytes io.Reader
-	reqBodyJSON, e := json.Marshal(data)
-	if e != nil {
-		return e
+	requestData := RequestData{
+		method: "DELETE",
+		path:   path,
+		data:   data,
+		query:  nil,
 	}
-	if len(reqBodyJSON) > maxBodySize {
-		return fmt.Errorf("Request payload too large (bodySizeBytes: %d, maxBodySize: %d)", len(reqBodyJSON), maxBodySize)
-	}
-	reqBodyBytes = bytes.NewBuffer(reqBodyJSON)
-	req, e := c.apiCall("DELETE", path, reqBodyBytes)
-	if e != nil {
-		return e
-	}
-	q := req.URL.Query()
-	req.URL.RawQuery = q.Encode()
-
-	return c.doRequest(req, output, true)
+	return c.doRequest(requestData, output, true)
 }
 
 func (c *OsoClientImpl) getPolicy() (*getPolicyResult, error) {

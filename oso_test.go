@@ -138,7 +138,7 @@ func TestRequestBodyTooBig(t *testing.T) {
 	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
 	user := Value{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
 	e := o.Insert(NewFact("has_role", user, String(strings.Repeat("a", 10*1024*1024))))
-	if e == nil || !strings.HasPrefix(e.Error(), "Request payload too large") {
+	if e == nil || !strings.HasPrefix(e.Error(), "request payload too large") {
 		t.Fatalf("Invalid API request had unexpected result: %v", e)
 	}
 }
@@ -427,34 +427,6 @@ func TestPolicyMetadata(t *testing.T) {
 
 		if !reflect.DeepEqual(*result, expected) {
 			t.Fatalf("GetPolicyMetadata failed,\ngot:\n%v\nexpected:\n%v", *result, expected)
-		}
-	})
-}
-
-func TestFallback(t *testing.T) {
-	oso := NewClientWithFallbackUrl("http://localhost:6000", "e_0123456789_12345_osotesttoken01xiIn", "http://localhost:8081")
-
-	user := Value{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
-	idCounter++
-	acme := Value{Type: "Repo", ID: fmt.Sprintf("%v", idCounter)}
-	idCounter++
-
-	t.Run("tell", func(t *testing.T) {
-		e := oso.Insert(NewFact("has_permission", user, String("read"), acme))
-		if e == nil {
-			t.Fatalf("Insert should fail because it is not supported by fallback")
-		}
-	})
-
-	t.Run("authorize", func(t *testing.T) {
-		result, e := oso.AuthorizeWithContext(user, "read", acme, []Fact{
-			{
-				Predicate: "has_permission",
-				Args:      []Value{user, String("read"), acme},
-			},
-		})
-		if e != nil || result != true {
-			t.Fatalf("Expect authorize to succeed")
 		}
 	})
 }

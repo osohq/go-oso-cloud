@@ -98,6 +98,7 @@ type ValuePattern interface {
 func (v Value) typ() string {
 	return v.Type
 }
+
 func (v Value) id() string {
 	return v.ID
 }
@@ -105,6 +106,7 @@ func (v Value) id() string {
 func (v ValueOfType) typ() string {
 	return v.Type
 }
+
 func (v ValueOfType) id() string {
 	return ""
 }
@@ -267,6 +269,7 @@ func (tx *batchTransaction) Insert(data Fact) error {
 
 	return nil
 }
+
 func (tx *batchTransaction) Delete(data IntoFactPattern) error {
 	f, err := data.intoFactPattern()
 	if err != nil {
@@ -336,7 +339,7 @@ type OsoClientImpl struct {
 // for documentation on the logger interfaces supported.
 func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string, fallbackUrl string, logger interface{}, dataBindings string) OsoClient {
 	retryClient := retryablehttp.NewClient()
-	retryClient.RetryMax = 10
+	retryClient.RetryMax = 3
 	retryClient.RetryWaitMin = 10 * time.Millisecond
 	retryClient.RetryWaitMax = 1 * time.Second
 	retryClient.Logger = logger
@@ -594,7 +597,6 @@ func (c OsoClientImpl) Actions(actor Value, resource Value) ([]string, error) {
 
 // Adds the given fact to Oso Cloud.
 func (c OsoClientImpl) Insert(fact Fact) error {
-
 	internalFact, err := toInternalFact(fact)
 	if err != nil {
 		return err

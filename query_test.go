@@ -7,6 +7,7 @@ import (
 
 func setupClient() OsoClientImpl {
 	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn").(OsoClientImpl)
+	o.clearData()
 	o.Policy(`
 		global {
 		  permissions = ["create_repository"];
@@ -95,7 +96,6 @@ func TestFieldLevel(t *testing.T) {
 	{
 		var result []string
 		err := qb.Evaluate(&result, field)
-
 		if err != nil {
 			t.Fatalf("Evaluate failed, %v", err)
 		}
@@ -151,7 +151,6 @@ func TestBulkActions(t *testing.T) {
 	err := o.BuildQuery(NewQueryFact("allow", user, action, repo)).
 		In(repo, repos).
 		Evaluate(&result, map[Variable]Variable{repo: action})
-
 	if err != nil {
 		t.Fatalf("Evaluate failed, %v", err)
 	}
@@ -349,7 +348,6 @@ func TestMultipleWithContextFacts(t *testing.T) {
 
 	var result bool
 	err := qb.Evaluate(&result, nil)
-
 	if err != nil {
 		t.Fatalf("Evaluate failed, %v", err)
 	}
