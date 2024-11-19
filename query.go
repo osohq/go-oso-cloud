@@ -497,3 +497,54 @@ func handleWildcard(v string) string {
 	}
 	return v
 }
+
+// Fetches a complete SQL query that can be run against your database,
+// selecting a row for each authorized combination of the query variables in
+// `columnNamesToQueryVars` (ie. combinations of variables that satisfy the
+// Oso query).
+// If you pass an empty map, the returned SQL query will select a single row
+// with a boolean column called `result`.
+func (this QueryBuilder) EvaluateLocalSelect(columnNamesToQueryVars map[string]Variable) (string, error) {
+	if this.Error != nil {
+		return "", this.Error
+	}
+	query, err := this.asQuery()
+	if err != nil {
+		return "", err
+	}
+	queryVarsToColumnNames := make(map[string]string)
+	for columnName, queryVar := range columnNamesToQueryVars {
+		id := queryVar.id.id
+		if _, containsKey := queryVarsToColumnNames[id]; containsKey {
+			return "", fmt.Errorf("Found a duplicated %s variable- you may not select a query variable more than once.", queryVar.typ)
+		}
+		queryVarsToColumnNames[id] = columnName
+	}
+
+	result, err := this.oso.postQueryLocal(query, localQuerySelect(queryVarsToColumnNames))
+	if err != nil {
+		return "", err
+	}
+
+	return result.Sql, nil
+}
+
+// Fetches a SQL fragment, which you can embed into the `WHERE` clause of a SQL
+// query against your database to filter out unauthorized rows (ie. rows that
+// don't satisfy the Oso query).
+func (this QueryBuilder) EvaluateLocalFilter(columnName string, queryVar Variable) (string, error) {
+	if this.Error != nil {
+		return "", this.Error
+	}
+	query, err := this.asQuery()
+	if err != nil {
+		return "", err
+	}
+
+	result, err := this.oso.postQueryLocal(query, localQueryFilter(columnName, queryVar.id.id))
+	if err != nil {
+		return "", err
+	}
+
+	return result.Sql, nil
+}

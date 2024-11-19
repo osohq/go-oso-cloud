@@ -1,8 +1,11 @@
 package oso
 
 import (
+	"fmt"
 	"os"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/postgres"
@@ -203,6 +206,83 @@ func TestListFiltering(t *testing.T) {
 		db.Raw(query).Pluck("actions", &actions)
 		if !reflect.DeepEqual(actions, []string{"read"}) {
 			t.Fatalf("expected [read], got %v", actions)
+		}
+	})
+
+	t.Run("query select", func(t *testing.T) {
+		userVar := TypedVar("User")
+		env1 := NewValue("Environment", "1")
+		query, err := oso.BuildQuery(NewQueryFact("allow", userVar, String("read"), env1)).WithContextFacts(
+			[]Fact{
+				NewFact("has_permission", NewValue("User", "dartagnan"), String("read"), env1),
+			},
+		).EvaluateLocalSelect(map[string]Variable{"user_id": userVar})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var userIds []string
+		err = db.Raw(query).Pluck("user_id", &userIds).Error
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(userIds)
+		if !reflect.DeepEqual(userIds, []string{"alice", "bob", "dartagnan"}) {
+			t.Fatalf("expected [alice, bob, dartagnan], got %v", userIds)
+		}
+	})
+
+	t.Run("query select with no projections", func(t *testing.T) {
+		userVar := TypedVar("User")
+		env1 := NewValue("Environment", "1")
+		query, err := oso.BuildQuery(NewQueryFact("allow", userVar, String("read"), env1)).WithContextFacts(
+			[]Fact{
+				NewFact("has_permission", NewValue("User", "dartagnan"), String("read"), env1),
+			},
+		).EvaluateLocalSelect(map[string]Variable{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var results []bool
+		err = db.Raw(query).Pluck("result", &results).Error
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(results, []bool{true}) {
+			t.Fatalf("expected [true], got %v", results)
+		}
+	})
+
+	t.Run("query select errors with duplicate variables", func(t *testing.T) {
+		userVar := TypedVar("User")
+		env1 := NewValue("Environment", "1")
+		_, err := oso.BuildQuery(
+			NewQueryFact("allow", userVar, String("read"), env1),
+		).EvaluateLocalSelect(map[string]Variable{"user_id": userVar, "another_user_id": userVar})
+		if err == nil || !strings.Contains(err.Error(), "duplicated User variable") {
+			t.Fatal("Expected 'duplicated User variable' error, got none")
+		}
+	})
+
+	t.Run("query filter", func(t *testing.T) {
+		userVar := TypedVar("User")
+		env1 := NewValue("Environment", "1")
+		filter, err := oso.BuildQuery(NewQueryFact("allow", userVar, String("read"), env1)).WithContextFacts(
+			[]Fact{
+				NewFact("has_permission", NewValue("User", "dartagnan"), String("read"), env1),
+			},
+		).EvaluateLocalFilter("users.user_id", userVar)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var userIds []string
+		query := fmt.Sprintf("SELECT user_id FROM (values ('alice'), ('bob'), ('charlie'), ('dartagnan')) as users(user_id) where %s order by user_id asc", filter)
+		err = db.Raw(query).Pluck("user_id", &userIds).Error
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(userIds, []string{"alice", "bob", "dartagnan"}) {
+			t.Fatalf("expected [alice, bob, dartagnan], got %v", userIds)
 		}
 	})
 

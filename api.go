@@ -160,6 +160,33 @@ type localQueryResult struct {
 	Sql string `json:"sql"`
 }
 
+type localQuery struct {
+	Query        query       `json:"query"`
+	DataBindings string      `json:"data_bindings"`
+	Mode         interface{} `json:"mode"` // construct via localQuerySelect or localQueryFilter functions
+}
+
+func localQuerySelect(queryVarsToOutputColumnNames map[string]string) interface{} {
+	return struct {
+		Mode                         string            `json:"mode"`
+		QueryVarsToOutputColumnNames map[string]string `json:"query_vars_to_output_column_names"`
+	}{
+		Mode:                         "select",
+		QueryVarsToOutputColumnNames: queryVarsToOutputColumnNames,
+	}
+}
+func localQueryFilter(outputColumnName string, queryVar string) interface{} {
+	return struct {
+		Mode             string `json:"mode"`
+		OutputColumnName string `json:"output_column_name"`
+		QueryVar         string `json:"query_var"`
+	}{
+		Mode:             "filter",
+		OutputColumnName: outputColumnName,
+		QueryVar:         queryVar,
+	}
+}
+
 // A struct to store information about a request
 //
 // We need this because we can't just build a request object and reuse it to
@@ -280,6 +307,7 @@ func (c *OsoClientImpl) fallbackEligible(path string, method string) bool {
 		{"/api/authorize_query", "post"},
 		{"/api/list_query", "post"},
 		{"/api/actions_query", "post"},
+		{"/api/evaluate_local_query", "post"},
 		{"/api/facts", "get"},
 		{"/api/policy_metadata", "get"},
 	}
@@ -544,6 +572,20 @@ func (c *OsoClientImpl) postActionsQuery(query actionsQuery) (*localQueryResult,
 	data := localActionsQuery{
 		Query:        query,
 		DataBindings: c.dataBindings,
+	}
+	var resBody localQueryResult
+	if e := c.post(url, data, &resBody, false); e != nil {
+		return nil, e
+	}
+	return &resBody, nil
+}
+
+func (c *OsoClientImpl) postQueryLocal(query query, mode interface{}) (*localQueryResult, error) {
+	url := "/evaluate_query_local"
+	data := localQuery{
+		Query:        query,
+		DataBindings: c.dataBindings,
+		Mode:         mode,
 	}
 	var resBody localQueryResult
 	if e := c.post(url, data, &resBody, false); e != nil {
