@@ -1,5 +1,5 @@
 // Oso Client cloud for Golang.
-// For more detailed documentation, see https://www.osohq.com/docs/reference/client-apis/go
+// For more detailed documentation, see https://www.osohq.com/docs/app-integration/client-apis/go
 package oso
 
 import (

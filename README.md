@@ -32,7 +32,7 @@ architecture, check out the
 - To get up and running with Oso Cloud, try the
   [Quickstart guide](https://www.osohq.com/docs/get-started/quickstart).
 - For method-level documentation, see the
-  [Go Client API documentation](https://www.osohq.com/docs/reference/client-apis/go).
+  [Go Client API documentation](https://www.osohq.com/docs/app-integration/client-apis/go).
 - Full documentation is available at
   [osohq.com/docs](https://www.osohq.com/docs).
 - To learn about authorization best practices (not specific to Oso), read the

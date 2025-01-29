@@ -75,6 +75,7 @@ type OsoTestClients struct {
 	valid       OsoClientImpl
 	unreachable OsoClientImpl
 	httpError   OsoClientImpl
+	http300     OsoClientImpl
 	http400     OsoClientImpl
 	http404     OsoClientImpl
 }
@@ -99,6 +100,7 @@ func getOsoTestClients(serverType TestServerType) OsoTestClients {
 	} else {
 		testServer = realTestServer
 	}
+	const testServer300 = "http://localhost:4000/return-300"
 	const testServer404 = "http://localhost:4000/return-404"
 	const testServer400 = "http://localhost:4000/return-400"
 	const testServer500 = "http://localhost:4000/return-500"
@@ -108,6 +110,7 @@ func getOsoTestClients(serverType TestServerType) OsoTestClients {
 		valid:       NewClient(testServer, apiKey).(OsoClientImpl),
 		unreachable: NewClientWithFallbackUrl(testServerNonexistent, apiKey, testServer).(OsoClientImpl),
 		httpError:   NewClientWithFallbackUrl(testServer500, apiKey, testServer).(OsoClientImpl),
+		http300:     NewClientWithFallbackUrl(testServer300, apiKey, testServer).(OsoClientImpl),
 		http400:     NewClientWithFallbackUrl(testServer400, apiKey, testServer).(OsoClientImpl),
 		http404:     NewClientWithFallbackUrl(testServer404, apiKey, testServer).(OsoClientImpl),
 	}
@@ -128,6 +131,7 @@ func getFallbackEligibilityTestCases() []FallbackTestCase {
 		{testClients.http400, 1},
 		{testClients.httpError, 1},
 		{testClients.unreachable, 1},
+		{testClients.http300, 0},
 	}
 }
 

@@ -345,7 +345,7 @@ func (c *OsoClientImpl) doRequest(requestData RequestData, output interface{}, i
 				return e
 			}
 		} else {
-			// If status code is >= 400 and we don't have fallback configured, we
+			// If status code is not 2xx and we don't have fallback configured, we
 			// can get into this branch without an error set. In that case we want
 			// to continue and return the response object to the caller.
 			if e != nil {
@@ -358,7 +358,8 @@ func (c *OsoClientImpl) doRequest(requestData RequestData, output interface{}, i
 	if e != nil {
 		return e
 	}
-	if res.StatusCode < 200 || res.StatusCode >= 400 {
+	// Re: ENG-984, non-2xx response codes are treated as errors
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		var apiErr apiError
 		e = json.Unmarshal(resBodyJSON, &apiErr)
 		if e != nil {
