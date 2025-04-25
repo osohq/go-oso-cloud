@@ -396,6 +396,46 @@ func TestWildcardMapResults(t *testing.T) {
 	}
 }
 
+func TestEvaluateDuplicateResults(t *testing.T) {
+	o := setupClient()
+	defer teardown(o)
+
+	bob := NewValue("User", "bob")
+	acme := NewValue("Org", "acme")
+	action := TypedVar("String")
+	repo := TypedVar("Repo")
+
+	// Bob has "read" and "write" on anvil via the parent org acme.
+	// This leads to two results: {action: "read", repo: "anvil"} and {action: "write", repo: "anvil"}
+	// Evaluating on the repo variable should only return one result.
+	qb := o.BuildQuery(NewQueryFact("allow", bob, action, repo)).
+		And(NewQueryFact("has_relation", repo, String("parent"), acme))
+	expected := []string{"anvil"}
+
+	// EvaluateValues
+	{
+		result, err := qb.EvaluateValues(repo)
+		if err != nil {
+			t.Fatalf("EvaluateValues failed, %v", err)
+		}
+		if !reflect.DeepEqual(result, expected) {
+			t.Fatalf("EvaluateValues result did not match (got %v; expected %v)", result, expected)
+		}
+	}
+
+	// Evaluate
+	{
+		var result []string
+		err := qb.Evaluate(&result, repo)
+		if err != nil {
+			t.Fatalf("Evaluate failed, %v", err)
+		}
+		if !reflect.DeepEqual(result, expected) {
+			t.Fatalf("Evaluate result did not match (got %v; expected %v)", result, expected)
+		}
+	}
+}
+
 func TestNestedMaps(t *testing.T) {
 	o := setupClient()
 	defer teardown(o)

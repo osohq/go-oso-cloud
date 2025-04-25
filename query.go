@@ -1,10 +1,12 @@
 package oso
 
-import "fmt"
-import "encoding/json"
-import "errors"
-import "math/rand"
-import "reflect"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/rand"
+	"reflect"
+)
 
 type queryId struct{ id string }
 
@@ -297,9 +299,15 @@ func (this QueryBuilder) EvaluateValues(t Variable) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(results.Results))
+	// Use a map to track unique values
+	seen := make(map[string]struct{})
+	out := make([]string, 0) // Can't predict capacity
 	for _, row := range results.Results {
-		out = append(out, handleWildcard(row[t.id.id]))
+		val := handleWildcard(row[t.id.id])
+		if _, exists := seen[val]; !exists {
+			seen[val] = struct{}{}
+			out = append(out, val)
+		}
 	}
 	return out, nil
 }
@@ -403,10 +411,24 @@ func evaluateResults(out reflect.Value, arg interface{}, results []map[string]st
 	ref := reflect.ValueOf(arg)
 	switch ref.Kind() {
 	case reflect.Struct:
-		if _, ok := arg.(Variable); !ok {
+		vari, ok := arg.(Variable)
+		if !ok {
 			return fmt.Errorf("non-Variable struct `%s`", ref.Type().String())
 		}
-		fallthrough
+		outElem := out.Elem().Type()
+
+		// Use a map to track unique values
+		seen := make(map[string]struct{})
+		list := reflect.MakeSlice(outElem, 0, 0) // Can't predict capacity
+		for _, r := range results {
+			val := handleWildcard(r[vari.id.id])
+			if _, exists := seen[val]; !exists {
+				seen[val] = struct{}{}
+				list = reflect.Append(list, reflect.ValueOf(val))
+			}
+		}
+		out.Elem().Set(list)
+		return nil
 	case reflect.Slice:
 		outElem := out.Elem().Type()
 		list := reflect.MakeSlice(outElem, 0, len(results))
