@@ -198,6 +198,7 @@ func (this QueryBuilder) In(v Variable, values []string) QueryBuilder {
 		return clone
 	}
 	bind.IDs = values
+	clone.constraints[v.id] = bind
 	return clone
 }
 

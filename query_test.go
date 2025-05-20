@@ -53,11 +53,13 @@ func setupClient() OsoClientImpl {
 	bob := NewValue("User", "bob")
 	acme := NewValue("Org", "acme")
 	anvil := NewValue("Repo", "anvil")
+	swage := NewValue("Repo", "swage")
 
 	o.Batch(func(tx BatchTransaction) {
 		tx.Insert(NewFact("has_role", alice, String("member"), acme))
 		tx.Insert(NewFact("has_role", bob, String("admin"), acme))
 		tx.Insert(NewFact("has_relation", anvil, String("parent"), acme))
+		tx.Insert(NewFact("has_role", alice, String("member"), swage))
 	})
 	return o
 }
