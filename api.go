@@ -316,10 +316,14 @@ func (c *OsoClientImpl) fallbackEligible(path string, method string) bool {
 	)
 }
 
+func (c *OsoClientImpl) doRequest(requestData RequestData, output interface{}, isMutation bool) error {
+	return c.doRequestWithParityHandle(requestData, output, isMutation, nil)
+}
+
 // Actually send the request. Takes request data that can be used to build the
 // relevant request with different base urls. This is needed to handle falling
 // back to a host at a different base url.
-func (c *OsoClientImpl) doRequest(requestData RequestData, output interface{}, isMutation bool) error {
+func (c *OsoClientImpl) doRequestWithParityHandle(requestData RequestData, output interface{}, isMutation bool, parityHandle *ParityHandle) error {
 	req, err := c.apiCall(requestData)
 	if err != nil {
 		return err
@@ -368,6 +372,17 @@ func (c *OsoClientImpl) doRequest(requestData RequestData, output interface{}, i
 		requestID := res.Header.Get("X-Request-ID")
 		return errors.New("Oso Cloud error: " + apiErr.Message + " (Request ID: " + requestID + ")")
 	}
+
+	if parityHandle != nil {
+		requestID := res.Header.Get("X-Request-ID")
+		if requestID == "" {
+			return errors.New("unable to use Parity Handle: no request ID returned from Oso")
+		}
+		if err := parityHandle.set(requestID, c); err != nil {
+			return err
+		}
+	}
+
 	if isMutation {
 		c.lastOffset = res.Header.Get("OsoOffset")
 	}
@@ -390,13 +405,17 @@ func (c *OsoClientImpl) get(path string, query map[string]string, output interfa
 }
 
 func (c *OsoClientImpl) post(path string, data interface{}, output interface{}, isMutation bool) error {
+	return c.postWithParityHandle(path, data, output, isMutation, nil)
+}
+
+func (c *OsoClientImpl) postWithParityHandle(path string, data interface{}, output interface{}, isMutation bool, parityHandle *ParityHandle) error {
 	requestData := RequestData{
 		method: "POST",
 		path:   path,
 		data:   data,
 		query:  nil,
 	}
-	return c.doRequest(requestData, output, isMutation)
+	return c.doRequestWithParityHandle(requestData, output, isMutation, parityHandle)
 }
 
 func (c *OsoClientImpl) delete(path string, data interface{}, output interface{}) error {
@@ -468,10 +487,13 @@ func (c *OsoClientImpl) postBatch(data []factChangeset) (*apiResult, error) {
 	return &resBody, nil
 }
 
-func (c *OsoClientImpl) postAuthorize(data authorizeQuery) (*authorizeResult, error) {
+func (c *OsoClientImpl) postAuthorize(data authorizeQuery, parityHandle *ParityHandle) (*authorizeResult, error) {
 	url := "/authorize"
 	var resBody authorizeResult
-	if e := c.post(url, data, &resBody, false); e != nil {
+
+	e := c.postWithParityHandle(url, data, &resBody, false, parityHandle)
+
+	if e != nil {
 		return nil, e
 	}
 	return &resBody, nil
@@ -541,14 +563,17 @@ func (c *OsoClientImpl) getFacts(data factPattern) ([]fact, error) {
 	return resBody, nil
 }
 
-func (c *OsoClientImpl) postAuthorizeQuery(query authorizeQuery) (*localQueryResult, error) {
+func (c *OsoClientImpl) postAuthorizeQuery(query authorizeQuery, parityHandle *ParityHandle) (*localQueryResult, error) {
 	url := "/authorize_query"
 	data := localAuthQuery{
 		Query:        query,
 		DataBindings: c.dataBindings,
 	}
 	var resBody localQueryResult
-	if e := c.post(url, data, &resBody, false); e != nil {
+
+	e := c.postWithParityHandle(url, data, &resBody, false, parityHandle)
+
+	if e != nil {
 		return nil, e
 	}
 	return &resBody, nil
@@ -590,6 +615,14 @@ func (c *OsoClientImpl) postQueryLocal(query query, mode interface{}) (*localQue
 	}
 	var resBody localQueryResult
 	if e := c.post(url, data, &resBody, false); e != nil {
+		return nil, e
+	}
+	return &resBody, nil
+}
+
+func (c *OsoClientImpl) postExpectedResult(expectedResult expectedResult) (*apiResult, error) {
+	var resBody apiResult
+	if e := c.post("/expect", expectedResult, &resBody, false); e != nil {
 		return nil, e
 	}
 	return &resBody, nil

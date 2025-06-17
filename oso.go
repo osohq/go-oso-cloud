@@ -115,6 +115,11 @@ type AuthorizeResult authorizeResult
 
 // TODO explain what this ^ is and why it exists- something about local authz?
 
+type AuthorizeOptions struct {
+	ContextFacts []Fact
+	ParityHandle *ParityHandle
+}
+
 // Constructs a [Value] from the given string.
 func String(s string) Value {
 	return Value{Type: "String", ID: s}
@@ -308,11 +313,13 @@ type OsoClient interface {
 	ActionsWithContext(actor Value, resource Value, contextFacts []Fact) ([]string, error)
 	Authorize(actor Value, action string, resource Value) (bool, error)
 	AuthorizeWithContext(actor Value, action string, resource Value, contextFacts []Fact) (bool, error)
+	AuthorizeWithOptions(actor Value, action string, resource Value, options *AuthorizeOptions) (bool, error)
 	List(actor Value, action string, resource string, contextFacts []Fact) ([]string, error)
 	ListWithContext(actor Value, action string, resource string, contextFacts []Fact) ([]string, error)
 	BuildQuery(query QueryFact) QueryBuilder
 	AuthorizeLocal(actor Value, action string, resource Value) (string, error)
 	AuthorizeLocalWithContext(actor Value, action string, resource Value, contextFacts []Fact) (string, error)
+	AuthorizeLocalWithOptions(actor Value, action string, resource Value, options *AuthorizeOptions) (string, error)
 	ListLocal(actor Value, action string, resource string, column string) (string, error)
 	ListLocalWithContext(actor Value, action string, resource string, column string, contextFacts []Fact) (string, error)
 	ActionsLocal(actor Value, resource Value) (string, error)
@@ -412,12 +419,22 @@ func NewClientWithLoggerAndDataBindings(url string, apiKey string, logger interf
 // Check a permission depending on data both in Oso Cloud and stored in a local database:
 // Returns a SQL query to run against the local database.
 func (c OsoClientImpl) AuthorizeLocal(actor Value, action string, resource Value) (string, error) {
-	return c.AuthorizeLocalWithContext(actor, action, resource, []Fact{})
+	return c.AuthorizeLocalWithOptions(actor, action, resource, &AuthorizeOptions{
+		ContextFacts: []Fact{},
+		ParityHandle: nil,
+	})
 }
 
 // Check a permission depending on data both in Oso Cloud and stored in a local database:
 // Returns a SQL query to run against the local database.
 func (c OsoClientImpl) AuthorizeLocalWithContext(actor Value, action string, resource Value, contextFacts []Fact) (string, error) {
+	return c.AuthorizeLocalWithOptions(actor, action, resource, &AuthorizeOptions{
+		ContextFacts: contextFacts,
+		ParityHandle: nil,
+	})
+}
+
+func (c OsoClientImpl) AuthorizeLocalWithOptions(actor Value, action string, resource Value, options *AuthorizeOptions) (string, error) {
 	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return "", err
@@ -432,10 +449,15 @@ func (c OsoClientImpl) AuthorizeLocalWithContext(actor Value, action string, res
 		Action:       action,
 		ResourceType: resourceT.Type,
 		ResourceId:   resourceT.Id,
-		ContextFacts: mapToInternalFacts(contextFacts),
+		ContextFacts: mapToInternalFacts(options.ContextFacts),
 	}
 
-	resp, err := c.postAuthorizeQuery(payload)
+	var parityHandle *ParityHandle
+	if options.ParityHandle != nil {
+		parityHandle = options.ParityHandle
+	}
+
+	resp, err := c.postAuthorizeQuery(payload, parityHandle)
 	if err != nil {
 		return "", err
 	}
@@ -506,8 +528,24 @@ func (c OsoClientImpl) ActionsLocalWithContext(actor Value, resource Value, cont
 }
 
 // Determines whether or not an action is allowed, based on a combination of
+// authorization data and policy logic.
+func (c OsoClientImpl) Authorize(actor Value, action string, resource Value) (bool, error) {
+	return c.AuthorizeWithOptions(actor, action, resource, &AuthorizeOptions{
+		ContextFacts: []Fact{},
+		ParityHandle: nil,
+	})
+}
+
+// Determines whether or not an action is allowed, based on a combination of
 // authorization data (including the given context facts) and policy logic.
 func (c OsoClientImpl) AuthorizeWithContext(actor Value, action string, resource Value, contextFacts []Fact) (bool, error) {
+	return c.AuthorizeWithOptions(actor, action, resource, &AuthorizeOptions{
+		ContextFacts: contextFacts,
+		ParityHandle: nil,
+	})
+}
+
+func (c OsoClientImpl) AuthorizeWithOptions(actor Value, action string, resource Value, options *AuthorizeOptions) (bool, error) {
 	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return false, err
@@ -522,20 +560,18 @@ func (c OsoClientImpl) AuthorizeWithContext(actor Value, action string, resource
 		Action:       action,
 		ResourceType: resourceT.Type,
 		ResourceId:   resourceT.Id,
-		ContextFacts: mapToInternalFacts(contextFacts),
+		ContextFacts: mapToInternalFacts(options.ContextFacts),
+	}
+	var parityHandle *ParityHandle
+	if options.ParityHandle != nil {
+		parityHandle = options.ParityHandle
 	}
 
-	resp, err := c.postAuthorize(payload)
+	resp, err := c.postAuthorize(payload, parityHandle)
 	if err != nil {
 		return false, err
 	}
 	return resp.Allowed, nil
-}
-
-// Determines whether or not an action is allowed, based on a combination of
-// authorization data and policy logic.
-func (c OsoClientImpl) Authorize(actor Value, action string, resource Value) (bool, error) {
-	return c.AuthorizeWithContext(actor, action, resource, nil)
 }
 
 // Fetches a list of resource ids on which an actor can perform a particular action, considering the given context facts.
