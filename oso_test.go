@@ -70,15 +70,25 @@ func TestEverything(t *testing.T) {
 			t.Fatalf("Insert failed: %v", e)
 		}
 
+		// bad facts
 		e = o.Insert(NewFact("has_role", user, String("member"), repoChild))
 		if e != nil {
 			t.Fatalf("Insert failed: %v", e)
 		}
-
 		e = o.Insert(NewFact("has_role", user, String("member"), repoParent))
 		if e != nil {
 			t.Fatalf("Insert failed: %v", e)
 		}
+
+		e = o.Insert(NewFact("has_role", NewValue("", "bad"), String("member"), repoParent))
+		if e == nil {
+			t.Fatalf("Expected failure for bad type, got: %v", e)
+		}
+		e = o.Insert(NewFact("has_role", NewValue("User", ""), String("member"), repoParent))
+		if e == nil {
+			t.Fatalf("Expected failure for bad id, got: %v", e)
+		}
+
 		roles, e := o.Get(NewFactPattern("has_role", user, String("member"), repoChild))
 		if e != nil || len(roles) != 1 || roles[0].Predicate != "has_role" {
 			t.Fatalf("Get roles = %+v, %v, want %d elements with %q predicate", roles, e, 1, "has_role")
@@ -232,6 +242,34 @@ func TestBatch(t *testing.T) {
 		}
 		if roles[0].Args[0] != NewValue("User", "2") {
 			t.Fatalf("Expected has_role(User{1}, \"owner\", Repo{2}), got %v", roles[0])
+		}
+
+		e = o.Batch(func(tx BatchTransaction) {
+			tx.Insert(
+				NewFact(
+					"has_role",
+					NewValue("", "1"), 		// Empty Type
+					String("member"),
+					NewValue("Repo", "1"),
+				),
+			)
+		})
+		if e == nil {
+			t.Fatalf("Expected bad id error got %e\n", e)
+		}
+
+		e = o.Batch(func(tx BatchTransaction) {
+			tx.Insert(
+				NewFact(
+					"has_role",
+					NewValue("User", ""), 		// Empty ID
+					String("member"),
+					NewValue("Repo", "1"),
+				),
+			)
+		})
+		if e == nil {
+			t.Fatalf("Expected bad id error got %e\n", e)
 		}
 	})
 

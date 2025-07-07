@@ -156,7 +156,10 @@ func toConcreteValue(instance Value) (*concreteValue, error) {
 func toInternalFact(f Fact) (*fact, error) {
 	valueArgs := []concreteValue{}
 	for _, arg := range f.Args {
-		arg, _ := toConcreteValue(arg)
+		arg, err := toConcreteValue(arg)
+		if err != nil {
+			return nil, err
+		}
 		valueArgs = append(valueArgs, *arg)
 	}
 
@@ -253,11 +256,13 @@ type BatchTransaction interface {
 
 type batchTransaction struct {
 	changesets []factChangeset
+	batcherror error
 }
 
 func (tx *batchTransaction) Insert(data Fact) error {
 	f, err := toInternalFact(data)
 	if err != nil {
+		tx.batcherror = err
 		return err
 	}
 	var changeset batchInserts
@@ -278,6 +283,7 @@ func (tx *batchTransaction) Insert(data Fact) error {
 func (tx *batchTransaction) Delete(data IntoFactPattern) error {
 	f, err := data.intoFactPattern()
 	if err != nil {
+		tx.batcherror = err
 		return err
 	}
 
@@ -683,6 +689,9 @@ func (c OsoClientImpl) Delete(pattern IntoFactPattern) error {
 func (c OsoClientImpl) Batch(fn func(BatchTransaction)) error {
 	tx := batchTransaction{changesets: []factChangeset{}}
 	fn(&tx)
+	if tx.batcherror != nil {
+		return tx.batcherror
+	}
 	_, err := c.postBatch(tx.changesets)
 	if err != nil {
 		return err

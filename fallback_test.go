@@ -157,7 +157,7 @@ func Test_AuthorizeFallback(t *testing.T) {
 func Test_ListFallback(t *testing.T) {
 	testCases := getFallbackEligibilityTestCases()
 	for _, tc := range testCases {
-		tc.client.List(user(), "read", "Repo", []Fact{})
+		tc.client.List(user(), "read", "Repo", nil)
 		assertCalled("post", "api/list", tc.expected_count, t)
 		resetMockServer()
 	}
