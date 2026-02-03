@@ -23,7 +23,7 @@ func (Environment) TableName() string {
 }
 
 func TestListFiltering(t *testing.T) {
-	oso := NewClientWithDataBindings("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn", "../../feature/src/tests/data_bindings/oso_control.yaml")
+	oso := NewClientWithDataBindings("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn", "../../feature-test-data/data_bindings/oso_control.yaml")
 
 	postgres := postgres.Open("host=localhost user=oso password=oso dbname=oso_control")
 	db, err := gorm.Open(postgres)
@@ -39,7 +39,7 @@ func TestListFiltering(t *testing.T) {
 	environmentAny := Value{Type: "Environment", ID: "12345"}
 
 	// setup
-	policy, err := os.ReadFile("../../feature/src/tests/policies/oso_control.polar")
+	policy, err := os.ReadFile("../../feature-test-data/policies/oso_control.polar")
 	if err != nil {
 		t.Fatal(err)
 	}

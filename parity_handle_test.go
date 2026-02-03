@@ -133,9 +133,9 @@ func TestParityHandlesAreSeparate(t *testing.T) {
 }
 
 func setupAuthLocalParityTest() (OsoClient, Value, Value, Value) {
-	oso := NewClientWithDataBindings("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn", "../../feature/src/tests/data_bindings/oso_control.yaml")
+	oso := NewClientWithDataBindings("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn", "../../feature-test-data/data_bindings/oso_control.yaml")
 
-	policy, err := os.ReadFile("../../feature/src/tests/policies/oso_control.polar")
+	policy, err := os.ReadFile("../../feature-test-data/policies/oso_control.polar")
 	if err != nil {
 		panic(err)
 	}

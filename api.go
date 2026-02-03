@@ -25,10 +25,6 @@ type policy struct {
 	Src      string  `json:"src"`
 }
 
-type getPolicyResult struct {
-	Policy *policy `json:"policy"`
-}
-
 type fact struct {
 	Predicate string          `json:"predicate"`
 	Args      []concreteValue `json:"args"`
@@ -115,12 +111,6 @@ type query struct {
 
 type queryResult struct {
 	Results []map[string]string `json:"results"`
-}
-
-type statsResult struct {
-	NumRoles     int `json:"num_roles"`
-	NumRelations int `json:"num_relations"`
-	NumFacts     int `json:"num_facts"`
 }
 
 type getPolicyMetadataResult struct {
@@ -418,24 +408,6 @@ func (c *OsoClientImpl) postWithParityHandle(path string, data interface{}, outp
 	return c.doRequestWithParityHandle(requestData, output, isMutation, parityHandle)
 }
 
-func (c *OsoClientImpl) delete(path string, data interface{}, output interface{}) error {
-	requestData := RequestData{
-		method: "DELETE",
-		path:   path,
-		data:   data,
-		query:  nil,
-	}
-	return c.doRequest(requestData, output, true)
-}
-
-func (c *OsoClientImpl) getPolicy() (*getPolicyResult, error) {
-	var result getPolicyResult
-	if e := c.get("/policy", nil, &result); e != nil {
-		return nil, e
-	}
-	return &result, nil
-}
-
 func (c *OsoClientImpl) getPolicyMetadataResult(version *string) (*getPolicyMetadataResult, error) {
 	var result getPolicyMetadataResult
 	params := make(map[string]string)
@@ -521,15 +493,6 @@ func (c *OsoClientImpl) postQuery(data query) (*queryResult, error) {
 	url := "/evaluate_query"
 	var resBody queryResult
 	if e := c.post(url, data, &resBody, false); e != nil {
-		return nil, e
-	}
-	return &resBody, nil
-}
-
-func (c *OsoClientImpl) getStats() (*statsResult, error) {
-	url := "/stats"
-	var resBody statsResult
-	if e := c.get(url, nil, &resBody); e != nil {
 		return nil, e
 	}
 	return &resBody, nil
