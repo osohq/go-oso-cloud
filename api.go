@@ -7,10 +7,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 )
+
+type osoError struct {
+	message    string
+	requestID  string
+	statusCode int
+	retryAfter int
+}
+
+func (e *osoError) Error() string {
+	return "Oso Cloud error: " + e.message + " (Request ID: " + e.requestID + ")"
+}
 
 type apiResult struct {
 	Message string `json:"message"`
@@ -79,15 +91,18 @@ type authorizeQuery struct {
 }
 
 type listResult struct {
-	Results []string `json:"results"`
+	Results       []string `json:"results"`
+	NextPageToken *string  `json:"next_page_token"`
 }
 
 type listQuery struct {
-	ActorType    string `json:"actor_type"`
-	ActorId      string `json:"actor_id"`
-	Action       string `json:"action"`
-	ResourceType string `json:"resource_type"`
-	ContextFacts []fact `json:"context_facts"`
+	ActorType    string  `json:"actor_type"`
+	ActorId      string  `json:"actor_id"`
+	Action       string  `json:"action"`
+	ResourceType string  `json:"resource_type"`
+	ContextFacts []fact  `json:"context_facts"`
+	PageSize     *int    `json:"page_size,omitempty"`
+	PageToken    *string `json:"page_token,omitempty"`
 }
 
 type actionsResult struct {
@@ -360,7 +375,16 @@ func (c *OsoClientImpl) doRequestWithParityHandle(requestData RequestData, outpu
 			return e
 		}
 		requestID := res.Header.Get("X-Request-ID")
-		return errors.New("Oso Cloud error: " + apiErr.Message + " (Request ID: " + requestID + ")")
+		retryAfter := 0
+		if retryAfterStr := res.Header.Get("Retry-After"); retryAfterStr != "" {
+			retryAfter, _ = strconv.Atoi(retryAfterStr)
+		}
+		return &osoError{
+			message:    apiErr.Message,
+			requestID:  requestID,
+			statusCode: res.StatusCode,
+			retryAfter: retryAfter,
+		}
 	}
 
 	if parityHandle != nil {

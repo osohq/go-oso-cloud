@@ -163,6 +163,15 @@ func Test_ListFallback(t *testing.T) {
 	}
 }
 
+func Test_ListPaginatedFallback(t *testing.T) {
+	testCases := getFallbackEligibilityTestCases()
+	for _, tc := range testCases {
+		tc.client.ListPaginated(user(), "read", "Repo", 10, nil)
+		assertCalled("post", "api/list", tc.expected_count, t)
+		resetMockServer()
+	}
+}
+
 func Test_ActionsFallback(t *testing.T) {
 	testCases := getFallbackEligibilityTestCases()
 	for _, tc := range testCases {

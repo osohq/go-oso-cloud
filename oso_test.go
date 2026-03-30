@@ -248,7 +248,7 @@ func TestBatch(t *testing.T) {
 			tx.Insert(
 				NewFact(
 					"has_role",
-					NewValue("", "1"), 		// Empty Type
+					NewValue("", "1"), // Empty Type
 					String("member"),
 					NewValue("Repo", "1"),
 				),
@@ -262,7 +262,7 @@ func TestBatch(t *testing.T) {
 			tx.Insert(
 				NewFact(
 					"has_role",
-					NewValue("User", ""), 		// Empty ID
+					NewValue("User", ""), // Empty ID
 					String("member"),
 					NewValue("Repo", "1"),
 				),
@@ -377,6 +377,90 @@ func TestContextFacts(t *testing.T) {
 				t.Fatalf("AuthorizeWithContext nil = %v, %v want %v", result, e, []string{"read"})
 			}
 		})
+	})
+}
+
+func TestListPaginated(t *testing.T) {
+	o := NewClient("http://localhost:8081", "e_0123456789_12345_osotesttoken01xiIn")
+	o.Policy(`
+		actor User {}
+
+		resource Repo {
+			roles = ["member"];
+			permissions = ["read"];
+			"read" if "member";
+		}
+	`)
+
+	user := Value{Type: "User", ID: fmt.Sprintf("%v", idCounter)}
+	idCounter++
+	repoIds := []string{}
+	for i := 0; i < 5; i++ {
+		repoIds = append(repoIds, fmt.Sprintf("%v", idCounter))
+		idCounter++
+	}
+
+	// Insert 5 facts
+	e := o.Batch(func(tx BatchTransaction) {
+		for _, id := range repoIds {
+			tx.Insert(NewFact("has_permission", user, String("read"), Value{Type: "Repo", ID: id}))
+		}
+	})
+	if e != nil {
+		t.Fatalf("Batch insert failed: %v", e)
+	}
+
+	t.Run("paginates through all results", func(t *testing.T) {
+		allResults := []string{}
+		var pageToken *string
+
+		for {
+			page, err := o.ListPaginated(user, "read", "Repo", 2, pageToken)
+			if err != nil {
+				t.Fatalf("ListPaginated failed: %v", err)
+			}
+			if len(page.Results) > 2 {
+				t.Fatalf("Expected at most 2 results per page, got %d", len(page.Results))
+			}
+			allResults = append(allResults, page.Results...)
+			pageToken = page.NextPageToken
+			if pageToken == nil {
+				break
+			}
+		}
+
+		if len(allResults) != 5 {
+			t.Fatalf("Expected 5 total results, got %d", len(allResults))
+		}
+
+		// Compare with non-paginated list
+		listAll, err := o.ListWithContext(user, "read", "Repo", nil)
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if len(listAll) != 5 {
+			t.Fatalf("Expected 5 results from List, got %d", len(listAll))
+		}
+	})
+
+	t.Run("first page has next_page_token", func(t *testing.T) {
+		page, err := o.ListPaginated(user, "read", "Repo", 2, nil)
+		if err != nil {
+			t.Fatalf("ListPaginated failed: %v", err)
+		}
+		if len(page.Results) != 2 {
+			t.Fatalf("Expected 2 results, got %d", len(page.Results))
+		}
+		if page.NextPageToken == nil {
+			t.Fatalf("Expected next_page_token to be non-nil")
+		}
+	})
+
+	// teardown
+	o.Batch(func(tx BatchTransaction) {
+		for _, id := range repoIds {
+			tx.Delete(NewFact("has_permission", user, String("read"), Value{Type: "Repo", ID: id}))
+		}
 	})
 }
 

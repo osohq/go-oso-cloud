@@ -111,6 +111,12 @@ func (v ValueOfType) id() string {
 	return ""
 }
 
+// ListPage is the result of a paginated list call.
+type ListPage struct {
+	Results       []string
+	NextPageToken *string
+}
+
 type AuthorizeResult authorizeResult
 
 // TODO explain what this ^ is and why it exists- something about local authz?
@@ -322,6 +328,8 @@ type OsoClient interface {
 	AuthorizeWithOptions(actor Value, action string, resource Value, options *AuthorizeOptions) (bool, error)
 	List(actor Value, action string, resource string, contextFacts []Fact) ([]string, error)
 	ListWithContext(actor Value, action string, resource string, contextFacts []Fact) ([]string, error)
+	ListPaginated(actor Value, action string, resourceType string, pageSize int, pageToken *string) (*ListPage, error)
+	ListPaginatedWithContext(actor Value, action string, resourceType string, pageSize int, pageToken *string, contextFacts []Fact) (*ListPage, error)
 	BuildQuery(query QueryFact) QueryBuilder
 	AuthorizeLocal(actor Value, action string, resource Value) (string, error)
 	AuthorizeLocalWithContext(actor Value, action string, resource Value, contextFacts []Fact) (string, error)
@@ -351,6 +359,10 @@ type OsoClientImpl struct {
 // See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
 // for documentation on the logger interfaces supported.
 func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string, fallbackUrl string, logger interface{}, dataBindings string) OsoClient {
+	// Note: go-retryablehttp retries 429 and 5xx by default. 409 (Conflict) is
+	// intentionally not retried at this level -- the server uses 409 with
+	// Retry-After for paginated results not yet ready, which needs longer
+	// delays than HTTP-level backoff. Handled by per-page retry in list().
 	retryClient := retryablehttp.NewClient()
 	retryClient.RetryMax = 3
 	retryClient.RetryWaitMin = 10 * time.Millisecond
@@ -582,6 +594,37 @@ func (c OsoClientImpl) AuthorizeWithOptions(actor Value, action string, resource
 
 // Fetches a list of resource ids on which an actor can perform a particular action, considering the given context facts.
 func (c OsoClientImpl) ListWithContext(actor Value, action string, resourceType string, contextFacts []Fact) ([]string, error) {
+	var allResults []string
+	var pageToken *string
+	for {
+		page, err := c.ListPaginatedWithContext(actor, action, resourceType, 10000, pageToken, contextFacts)
+		if err != nil {
+			return nil, err
+		}
+		allResults = append(allResults, page.Results...)
+		if page.NextPageToken == nil {
+			break
+		}
+		pageToken = page.NextPageToken
+	}
+	return allResults, nil
+}
+
+// Fetches a list of resource ids on which an actor can perform a particular action.
+func (c OsoClientImpl) List(actor Value, action string, resourceType string, contextFacts []Fact) ([]string, error) {
+	return c.ListWithContext(actor, action, resourceType, nil)
+}
+
+// Fetches a page of resource ids on which an actor can perform a particular action.
+// Returns a ListPage with Results and NextPageToken. Pass NextPageToken to fetch subsequent pages.
+func (c OsoClientImpl) ListPaginated(actor Value, action string, resourceType string, pageSize int, pageToken *string) (*ListPage, error) {
+	return c.ListPaginatedWithContext(actor, action, resourceType, pageSize, pageToken, nil)
+}
+
+// Fetches a page of resource ids on which an actor can perform a particular action,
+// considering the given context facts.
+// Returns a ListPage with Results and NextPageToken. Pass NextPageToken to fetch subsequent pages.
+func (c OsoClientImpl) ListPaginatedWithContext(actor Value, action string, resourceType string, pageSize int, pageToken *string, contextFacts []Fact) (*ListPage, error) {
 	actorT, err := toConcreteValue(actor)
 	if err != nil {
 		return nil, err
@@ -592,18 +635,31 @@ func (c OsoClientImpl) ListWithContext(actor Value, action string, resourceType 
 		Action:       action,
 		ResourceType: resourceType,
 		ContextFacts: mapToInternalFacts(contextFacts),
+		PageSize:     &pageSize,
+		PageToken:    pageToken,
 	}
 
-	resp, err := c.postList(payload)
-	if err != nil {
-		return nil, err
+	var resp *listResult
+	var lastErr error
+	for retry := 0; retry < 10; retry++ {
+		resp, lastErr = c.postList(payload)
+		if lastErr != nil {
+			var osoErr *osoError
+			if errors.As(lastErr, &osoErr) && osoErr.statusCode == 409 && osoErr.retryAfter > 0 && retry < 9 {
+				time.Sleep(time.Duration(osoErr.retryAfter) * time.Second)
+				continue
+			}
+			return nil, lastErr
+		}
+		break
 	}
-	return resp.Results, nil
-}
-
-// Fetches a list of resource ids on which an actor can perform a particular action.
-func (c OsoClientImpl) List(actor Value, action string, resourceType string, contextFacts []Fact) ([]string, error) {
-	return c.ListWithContext(actor, action, resourceType, nil)
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return &ListPage{
+		Results:       resp.Results,
+		NextPageToken: resp.NextPageToken,
+	}, nil
 }
 
 // Fetches a list of actions which an actor can perform on a particular

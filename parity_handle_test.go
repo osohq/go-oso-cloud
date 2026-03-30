@@ -174,8 +174,6 @@ func TestAuthLocalWithParityHandle(t *testing.T) {
 	})
 	parityHandle.Expect(true)
 
-	
-
 	if err != nil {
 		t.Fatalf("AuthorizeLocalWithOptions failed: %v", err)
 	}
