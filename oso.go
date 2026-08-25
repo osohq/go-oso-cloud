@@ -354,11 +354,45 @@ type OsoClientImpl struct {
 	clientId           string
 }
 
-// Create a new Oso client with a fallbackURL and custom logger
+// ClientOptions configures optional behavior for an [OsoClient]. Construct a
+// client with these options using [NewClientWithOptions].
+type ClientOptions struct {
+	// FallbackUrl, when set, configures an Oso Fallback Node. Eligible
+	// requests are retried against this URL if the primary Oso Cloud service
+	// is unreachable or returns an error response.
+	FallbackUrl string
+
+	// Logger configures the leveled logger used by the underlying retry
+	// client.
+	//
+	// See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
+	// for documentation on the logger interfaces supported.
+	Logger interface{}
+
+	// DataBindings is a path to a local authorization data bindings YAML
+	// file, used by the AuthorizeLocal/ListLocal/ActionsLocal family of
+	// methods.
+	DataBindings string
+
+	// HttpClient, when provided, is used as the base HTTP client for
+	// requests to Oso Cloud (and, if configured, the fallback node). Use it
+	// to customize behavior such as timeouts, proxies, TLS configuration, or
+	// to install a custom [http.RoundTripper] (e.g. for tracing).
+	//
+	// Oso's own retry/backoff behavior is layered on top of the supplied
+	// client, so it continues to apply regardless of this setting.
+	//
+	// If nil, a default *http.Client is used.
+	HttpClient *http.Client
+}
+
+// Create a new Oso client configured with the given [ClientOptions].
 //
-// See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
-// for documentation on the logger interfaces supported.
-func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string, fallbackUrl string, logger interface{}, dataBindings string) OsoClient {
+// This is the recommended way to construct an [OsoClient] when you need to
+// configure anything beyond the URL and API key -- e.g. a fallback URL, a
+// custom logger, local authorization data bindings, or a custom
+// [http.Client].
+func NewClientWithOptions(url string, apiKey string, options ClientOptions) OsoClient {
 	// Note: go-retryablehttp retries 429 and 5xx by default. 409 (Conflict) is
 	// intentionally not retried at this level -- the server uses 409 with
 	// Retry-After for paginated results not yet ready, which needs longer
@@ -367,7 +401,10 @@ func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string,
 	retryClient.RetryMax = 3
 	retryClient.RetryWaitMin = 10 * time.Millisecond
 	retryClient.RetryWaitMax = 1 * time.Second
-	retryClient.Logger = logger
+	retryClient.Logger = options.Logger
+	if options.HttpClient != nil {
+		retryClient.HTTPClient = options.HttpClient
+	}
 
 	var userAgent string
 	rv, err := os.ReadFile("VERSION")
@@ -380,12 +417,17 @@ func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string,
 	lastOffset := ""
 
 	var fallbackClient *http.Client
-	if fallbackUrl != "" {
-		fallbackClient = &http.Client{}
+	if options.FallbackUrl != "" {
+		if options.HttpClient != nil {
+			fallbackClient = options.HttpClient
+		} else {
+			fallbackClient = &http.Client{}
+		}
 	} else {
 		fallbackClient = nil
 	}
 
+	dataBindings := options.DataBindings
 	if dataBindings != "" {
 		dataBindingsContents, err := os.ReadFile(dataBindings)
 		if err != nil {
@@ -397,7 +439,19 @@ func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string,
 
 	clientId := uuid.New().String()
 
-	return OsoClientImpl{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, fallbackUrl, fallbackClient, dataBindings, clientId}
+	return OsoClientImpl{url, apiKey, retryClient.StandardClient(), userAgent, lastOffset, options.FallbackUrl, fallbackClient, dataBindings, clientId}
+}
+
+// Create a new Oso client with a fallbackURL and custom logger
+//
+// See https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.1#LeveledLogger
+// for documentation on the logger interfaces supported.
+func NewClientWithFallbackUrlAndLoggerAndDataBindings(url string, apiKey string, fallbackUrl string, logger interface{}, dataBindings string) OsoClient {
+	return NewClientWithOptions(url, apiKey, ClientOptions{
+		FallbackUrl:  fallbackUrl,
+		Logger:       logger,
+		DataBindings: dataBindings,
+	})
 }
 
 // Create a new default Oso client
